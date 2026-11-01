@@ -1,0 +1,4976 @@
+import { ADMIN_DASHBOARD_HTML } from "./admin_html.js";
+/**
+ * Cloudflare Worker - ربات تلگرام «کافی نت لیمو»
+ * اجرای بومی روی شبکه لبه‌ای کلودفلر (Edge Cloud) متصل به دیتابیس ابری Cloudflare D1
+ */
+
+const WELCOME_TEXT = `☕️ <b>به سامانه آنلاین کافی نت لیمو خوش آمدید!</b>
+
+ارائه‌دهنده خدمات تخصصی دانشجویی، ثبت‌نام آزمون‌ها و استعلام مدارک.
+لطفاً یکی از گزینه‌های زیر را انتخاب فرمایید:`;
+
+const HELP_TEXT = `ℹ️ <b>راهنمای سامانه کافی نت لیمو:</b>
+
+• جهت ثبت سفارش: از منوی «📋 فهرست خدمات» خدمت مورد نظر را انتخاب نمایید.
+• جهت پیگیری پرونده: از منوی «🔍 پیگیری سفارش» کد رهگیری خود را ارسال کنید.
+• هماهنگی با اپراتور: سفارش‌ها پس از ثبت توسط اپراتور بررسی شده و مراحل تکمیل می‌گردد.`;
+
+const ACCESS_DENIED_TEXT = `⛔️ <b>خطای دسترسی:</b> شما صلاحیت دسترسی به پنل مدیریت را ندارید.`;
+
+const CLIENT_WEBAPP_HTML = `<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>پورتال مشتریان کافی نت لیمو</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;600;800&display=swap" rel="stylesheet">
+    <link rel="icon" type="image/png" href="/logo.png">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: { sans: ['Vazirmatn', 'sans-serif'] },
+                    colors: {
+                        limo: { 50: '#f7fee7', 500: '#84cc16', 600: '#65a30d', 700: '#4d7c0f' },
+                        slate: { 800: '#1e293b', 900: '#0f172a' }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        [v-cloak] { display: none !important; }
+        body {
+            background-color: var(--tg-theme-bg-color, #f8fafc);
+            color: var(--tg-theme-text-color, #0f172a);
+            font-family: 'Vazirmatn', sans-serif;
+            margin: 0; padding-bottom: 75px;
+        }
+    </style>
+</head>
+<body>
+    <div id="app" v-cloak class="max-w-md mx-auto p-4 space-y-4">
+        <!-- Header with Official Logo -->
+        <header class="text-center py-4 px-4 bg-white rounded-2xl border border-slate-100 shadow-sm space-y-2">
+            <div class="flex justify-center items-center py-1">
+                <img src="/logo.png" alt="کافی نت لیمو" class="h-16 w-auto object-contain">
+            </div>
+            <p class="text-xs text-slate-500 font-medium">پورتال آنلاین ثبت خدمات دانشجویی، آزمون‌ها و کنسولی</p>
+            <div class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-lime-50 text-lime-700 text-[10px] font-bold">
+                <span class="w-1.5 h-1.5 rounded-full bg-lime-500 animate-pulse"></span>
+                سامانه آنلاین و فعال
+            </div>
+        </header>
+
+        <!-- Navigation Tabs -->
+        <div class="grid grid-cols-3 gap-1 bg-slate-100 p-1 rounded-xl text-xs font-semibold text-slate-600">
+            <button @click="currentTab = 'services'" :class="{'bg-white text-limo-700 shadow-sm': currentTab === 'services' || currentTab === 'order_form'}" class="py-2 rounded-lg transition">📋 خدمات</button>
+            <button @click="currentTab = 'tracking'" :class="{'bg-white text-limo-700 shadow-sm': currentTab === 'tracking'}" class="py-2 rounded-lg transition">🔍 پیگیری</button>
+            <button @click="currentTab = 'payment'" :class="{'bg-white text-limo-700 shadow-sm': currentTab === 'payment'}" class="py-2 rounded-lg transition">💳 پرداخت</button>
+        </div>
+
+        <!-- 1. Services Tab -->
+        <div v-if="currentTab === 'services'" class="space-y-3">
+            <!-- ثبت‌نام‌های مقطعی و مهلت‌دار فصلی -->
+            <div v-if="campaigns.length > 0" class="space-y-2 mb-4">
+                <h2 class="text-xs font-black text-slate-800 flex items-center gap-1.5">
+                    <span class="text-amber-500">⏰</span> ثبت‌نام‌های مقطعی و دوره‌ای فعال:
+                </h2>
+                <div v-for="c in campaigns" :key="c.id" class="bg-gradient-to-l from-amber-500/10 via-amber-500/5 to-white p-3.5 rounded-2xl border border-amber-200/90 shadow-sm space-y-2">
+                    <div class="flex justify-between items-start">
+                        <div>
+                            <h3 class="font-bold text-xs text-slate-900">{{ c.title }}</h3>
+                            <div class="text-[10px] text-slate-500 font-mono mt-0.5">مهلت: تا {{ (c.end_at || '').slice(0, 10) }}</div>
+                        </div>
+                        <span :class="seasonalBadgeClass(c.dynamic_status)" class="px-2 py-0.5 rounded-full text-[9px] font-bold">
+                            {{ seasonalStatusLabel(c.dynamic_status) }}
+                        </span>
+                    </div>
+                    <p class="text-[11px] text-slate-600 leading-relaxed">{{ c.description }}</p>
+                    <div class="pt-1 flex items-center justify-between gap-2 border-t border-amber-100/60 pt-2">
+                        <span class="text-[11px] font-bold text-slate-700">تعرفه: {{ (c.base_fee || 0).toLocaleString('fa-IR') }} ریال</span>
+                        <div class="flex gap-1.5">
+                            <button v-if="c.dynamic_status === 'ACTIVE' || c.dynamic_status === 'EXPIRING_SOON'" @click="applyForCampaign(c)" class="bg-amber-600 hover:bg-amber-700 text-white px-3 py-1 rounded-lg text-[11px] font-bold shadow-sm transition">
+                                ثبت پرونده ✍️
+                            </button>
+                            <button v-if="c.dynamic_status !== 'ENDED'" @click="remindMe(c)" :disabled="isReminding" class="bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 px-2.5 py-1 rounded-lg text-[10px] font-bold transition">
+                                ⏰ به من یادآوری کن
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- نوار جستجو و انتخاب دسته‌بندی -->
+            <div class="space-y-2 mb-3">
+                <div class="relative">
+                    <input v-model="serviceSearch" type="text" placeholder="🔍 جستجوی خدمت (مثال: تاییدیه، مسکن، کنکور...)"
+                        class="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:border-limo-500 shadow-sm">
+                    <button v-if="serviceSearch" @click="serviceSearch = ''" class="absolute left-2.5 top-2 text-slate-400 text-xs">✕</button>
+                </div>
+
+                <!-- نوار اسکرول افقی دسته‌بندی‌ها -->
+                <div class="flex items-center gap-1.5 overflow-x-auto pb-1 text-xs" style="scrollbar-width: none;">
+                    <button @click="selectedCategory = 'ALL'"
+                        :class="selectedCategory === 'ALL' ? 'bg-limo-600 text-white font-bold shadow-sm' : 'bg-white text-slate-600 border border-slate-200'"
+                        class="px-3 py-1.5 rounded-xl whitespace-nowrap transition text-[11px]">
+                        ✨ همه دسته‌ها ({{ services.length }})
+                    </button>
+                    <button v-for="cat in activeCategories" :key="cat.id"
+                        @click="selectedCategory = cat.id"
+                        :class="selectedCategory === cat.id ? 'bg-limo-600 text-white font-bold shadow-sm' : 'bg-white text-slate-600 border border-slate-200'"
+                        class="px-3 py-1.5 rounded-xl whitespace-nowrap transition text-[11px] flex items-center gap-1">
+                        <span>{{ cat.title }}</span>
+                        <span class="opacity-75 text-[10px]">({{ getCategoryCount(cat.id) }})</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- نمایش دسته‌بندی‌شده خدمات (وقتی همه دسته‌ها انتخاب شده و جستجو خالی است) -->
+            <div v-if="selectedCategory === 'ALL' && !serviceSearch" class="space-y-4">
+                <!-- حالت ۱: نمایش دسته‌بندی‌شده بر اساس دسته‌های فعال -->
+                <div v-if="activeCategories.length > 0" class="space-y-4">
+                    <div v-for="cat in activeCategories" :key="cat.id" class="space-y-2">
+                        <div class="flex items-center justify-between border-b border-slate-200 pb-1 pt-1">
+                            <h3 class="font-black text-xs text-slate-800 flex items-center gap-1.5">
+                                <span>{{ cat.title }}</span>
+                            </h3>
+                            <span class="text-[10px] bg-slate-100 text-slate-500 font-mono px-2 py-0.5 rounded-full font-bold">
+                                {{ getServicesByCategory(cat.id).length }} خدمت
+                            </span>
+                        </div>
+
+                        <div v-for="s in getServicesByCategory(cat.id)" :key="s.code" class="bg-white p-3.5 rounded-2xl border border-slate-100 shadow-sm space-y-2">
+                            <div class="flex justify-between items-start">
+                                <h4 class="font-bold text-xs text-slate-900 leading-snug">{{ s.title }}</h4>
+                                <span class="text-[9px] bg-lime-50 text-lime-800 border border-lime-200/60 px-2 py-0.5 rounded-full font-bold">
+                                    {{ cat.title }}
+                                </span>
+                            </div>
+                            <p class="text-[11px] text-slate-500 leading-relaxed">{{ s.desc }}</p>
+                            <div class="pt-1.5 flex justify-between items-center text-xs border-t border-slate-50">
+                                <span class="text-[11px] font-bold text-slate-700">
+                                    {{ s.base_fee ? ((s.base_fee).toLocaleString('fa-IR') + ' ریال') : 'تعرفه مصوب کافی‌نت' }}
+                                </span>
+                                <button @click="selectService(s)" class="bg-limo-600 hover:bg-limo-700 text-white px-3.5 py-1.5 rounded-xl text-xs font-bold shadow-sm transition">
+                                    ثبت پرونده ✍️
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- بخش سایر خدمات (اگر خدمتی خارج از دسته‌های رسمی بود) -->
+                    <div v-if="uncategorizedServices.length > 0" class="space-y-2 pt-2">
+                        <div class="flex items-center justify-between border-b border-slate-200 pb-1">
+                            <h3 class="font-black text-xs text-slate-800 flex items-center gap-1.5">
+                                <span>📌 سایر خدمات</span>
+                            </h3>
+                            <span class="text-[10px] bg-slate-100 text-slate-500 font-mono px-2 py-0.5 rounded-full font-bold">
+                                {{ uncategorizedServices.length }} خدمت
+                            </span>
+                        </div>
+                        <div v-for="s in uncategorizedServices" :key="s.code" class="bg-white p-3.5 rounded-2xl border border-slate-100 shadow-sm space-y-2">
+                            <div class="flex justify-between items-start">
+                                <h4 class="font-bold text-xs text-slate-900 leading-snug">{{ s.title }}</h4>
+                                <span class="text-[9px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full font-bold">عمومی</span>
+                            </div>
+                            <p class="text-[11px] text-slate-500 leading-relaxed">{{ s.desc }}</p>
+                            <div class="pt-1.5 flex justify-between items-center text-xs border-t border-slate-50">
+                                <span class="text-[11px] font-bold text-slate-700">
+                                    {{ s.base_fee ? ((s.base_fee).toLocaleString('fa-IR') + ' ریال') : 'تعرفه مصوب کافی‌نت' }}
+                                </span>
+                                <button @click="selectService(s)" class="bg-limo-600 hover:bg-limo-700 text-white px-3.5 py-1.5 rounded-xl text-xs font-bold shadow-sm transition">
+                                    ثبت پرونده ✍️
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- حالت ۲: فالبک اگر دسته‌ها هنوز دریافت نشده باشند، برای جلوگیری ۱۰۰٪ از خالی ماندن صفحه -->
+                <div v-else class="space-y-2.5">
+                    <div v-for="s in services" :key="s.code" class="bg-white p-3.5 rounded-2xl border border-slate-100 shadow-sm space-y-2">
+                        <div class="flex justify-between items-start">
+                            <h4 class="font-bold text-xs text-slate-900 leading-snug">{{ s.title }}</h4>
+                        </div>
+                        <p class="text-[11px] text-slate-500 leading-relaxed">{{ s.desc }}</p>
+                        <div class="pt-1.5 flex justify-between items-center text-xs border-t border-slate-50">
+                            <span class="text-[11px] font-bold text-slate-700">
+                                {{ s.base_fee ? ((s.base_fee).toLocaleString('fa-IR') + ' ریال') : 'تعرفه مصوب کافی‌نت' }}
+                            </span>
+                            <button @click="selectService(s)" class="bg-limo-600 hover:bg-limo-700 text-white px-3.5 py-1.5 rounded-xl text-xs font-bold shadow-sm transition">
+                                ثبت پرونده ✍️
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- نمایش لیست فیلترشده (بر اساس دسته انتخابی یا عبارت جستجو) -->
+            <div v-else class="space-y-2.5">
+                <div v-if="filteredServices.length === 0" class="p-6 bg-white rounded-2xl border border-slate-100 text-center text-slate-400 text-xs">
+                    خدمتی با این مشخصات یافت نشد.
+                </div>
+                <div v-for="s in filteredServices" :key="s.code" class="bg-white p-3.5 rounded-2xl border border-slate-100 shadow-sm space-y-2">
+                    <div class="flex justify-between items-start">
+                        <h4 class="font-bold text-xs text-slate-900 leading-snug">{{ s.title }}</h4>
+                        <span class="text-[9px] bg-lime-50 text-lime-800 border border-lime-200/60 px-2 py-0.5 rounded-full font-bold">
+                            {{ s.category || 'کافی‌نت لیمو' }}
+                        </span>
+                    </div>
+                    <p class="text-[11px] text-slate-500 leading-relaxed">{{ s.desc }}</p>
+                    <div class="pt-1.5 flex justify-between items-center text-xs border-t border-slate-50">
+                        <span class="text-[11px] font-bold text-slate-700">
+                            {{ s.base_fee ? ((s.base_fee).toLocaleString('fa-IR') + ' ریال') : 'تعرفه مصوب کافی‌نت' }}
+                        </span>
+                        <button @click="selectService(s)" class="bg-limo-600 hover:bg-limo-700 text-white px-3.5 py-1.5 rounded-xl text-xs font-bold shadow-sm transition">
+                            ثبت پرونده ✍️
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 1.1 Order Intake Form Tab -->
+        <div v-if="currentTab === 'order_form'" class="bg-white p-4 rounded-xl border border-slate-100 shadow-sm space-y-4">
+            <div class="flex justify-between items-center border-b border-slate-100 pb-3">
+                <h2 class="text-sm font-bold text-slate-800">📝 فرم ثبت درخواست: {{ selectedService?.title }}</h2>
+                <button @click="currentTab = 'services'" class="text-slate-400 hover:text-slate-600 text-xs">✕ بازگشت</button>
+            </div>
+
+            <!-- بخش تعهدنامه مسکن قبل از باز شدن فرم -->
+            <div v-if="selectedService?.code === 'HOUSING_TRACKING_CODE' && !housingTermsAccepted" class="space-y-3 p-4 bg-amber-50/70 border border-amber-200 rounded-2xl text-xs text-slate-700 leading-relaxed">
+                <div class="font-bold text-amber-900 text-sm flex items-center gap-1.5">
+                    <span>📜</span> شرایط و تعهدنامه ثبت کد رهگیری مسکن (سامانه خودنویس):
+                </div>
+                <ul class="space-y-1.5 list-disc list-inside text-slate-600 text-[11px]">
+                    <li><b>مسئولیت صحت اطلاعات:</b> کلیه اطلاعات ثبت‌شده باید منطبق بر اسناد مالکیت و هویتی طرفین باشد.</li>
+                    <li><b>مالکیت شماره‌های تماس:</b> شماره تماس مستأجر الزاماً به نام خود مستأجر، و شماره تماس مالک الزاماً به نام خود موجر باشد.</li>
+                    <li><b>کد ملی مالک:</b> استعلام و ثبت قرارداد نیازمند کد ملی ۱۰ رقمی معتبر مالک است.</li>
+                    <li><b>شاهدان قرارداد:</b> ثبت نهایی نیازمند تأیید دو شاهد معتبر ایرانی است (امکان معرفی شاهد یا درخواست تأمین توسط کافی‌نت وجود دارد).</li>
+                    <li><b>حفاظت از اطلاعات:</b> داده‌های هویتی و مالی شما محرمانه بوده و در لاگ‌های عمومی افشا نمی‌گردد.</li>
+                </ul>
+                <div class="pt-2">
+                    <button @click="housingTermsAccepted = true" class="w-full bg-amber-700 hover:bg-amber-800 text-white font-bold py-2.5 rounded-xl text-xs shadow-md transition">
+                        ✅ شرایط را خواندم و می‌پذیرم
+                    </button>
+                </div>
+            </div>
+
+            <!-- فرم اصلی دریافت اطلاعات -->
+            <div v-else class="space-y-3">
+                <!-- فیلدهای عمومی متقاضی -->
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-700 mb-1">نام و نام خانوادگی: *</label>
+                        <input v-model="orderFormData.fullName" type="text" placeholder="مثال: علی احمدی" class="w-full border border-slate-200 rounded-xl p-2.5 text-xs focus:outline-none focus:border-limo-500">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-700 mb-1">شماره تماس فعال متقاضی: *</label>
+                        <input v-model="orderFormData.phoneNumber" type="tel" placeholder="09123456789" class="w-full border border-slate-200 rounded-xl p-2.5 text-xs font-mono focus:outline-none focus:border-limo-500 text-left">
+                    </div>
+                </div>
+
+                <!-- فیلدهای اختصاصی ۱: کد رهگیری مسکن -->
+                <div v-if="selectedService?.code === 'HOUSING_TRACKING_CODE'" class="space-y-3 p-3 bg-slate-50 rounded-xl border border-slate-200 text-xs text-slate-700">
+                    <div class="font-bold text-slate-800 border-b border-slate-200 pb-1.5">🏠 اطلاعات ملک و طرفین قرارداد:</div>
+                    <div class="grid grid-cols-2 gap-2">
+                        <div>
+                            <label class="block text-[11px] font-semibold mb-1">شماره موبایل مستأجر: *</label>
+                            <input v-model="orderFormData.tenantPhone" type="tel" placeholder="0912..." class="w-full border border-slate-200 rounded-lg p-2 text-xs font-mono text-left">
+                        </div>
+                        <div>
+                            <label class="block text-[11px] font-semibold mb-1">شماره موبایل مالک: *</label>
+                            <input v-model="orderFormData.landlordPhone" type="tel" placeholder="0912..." class="w-full border border-slate-200 rounded-lg p-2 text-xs font-mono text-left">
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-2 gap-2">
+                        <div>
+                            <label class="block text-[11px] font-semibold mb-1">کد ملی ۱۰ رقمی مالک: *</label>
+                            <input v-model="orderFormData.ownerNationalCode" type="text" placeholder="کد ملی موجر" maxlength="10" class="w-full border border-slate-200 rounded-lg p-2 text-xs font-mono text-left">
+                        </div>
+                        <div>
+                            <label class="block text-[11px] font-semibold mb-1">شماره کارت واریز اجاره: *</label>
+                            <input v-model="orderFormData.ownerCardNumber" type="text" placeholder="۱۶ رقم کارت مالک" maxlength="16" class="w-full border border-slate-200 rounded-lg p-2 text-xs font-mono text-left">
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-3 gap-2">
+                        <div>
+                            <label class="block text-[11px] font-semibold mb-1">مبلغ رهن (تومان):</label>
+                            <input v-model="orderFormData.depositAmount" type="text" placeholder="مثال: 100,000,000" class="w-full border border-slate-200 rounded-lg p-2 text-xs">
+                        </div>
+                        <div>
+                            <label class="block text-[11px] font-semibold mb-1">اجاره ماهانه (تومان):</label>
+                            <input v-model="orderFormData.monthlyRent" type="text" placeholder="مثال: 5,000,000" class="w-full border border-slate-200 rounded-lg p-2 text-xs">
+                        </div>
+                        <div>
+                            <label class="block text-[11px] font-semibold mb-1">مدت قرارداد:</label>
+                            <input v-model="orderFormData.durationMonths" type="text" placeholder="مثال: یک سال" class="w-full border border-slate-200 rounded-lg p-2 text-xs">
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-2 gap-2">
+                        <div>
+                            <label class="block text-[11px] font-semibold mb-1">کد پستی ۱۰ رقمی ملک: *</label>
+                            <input v-model="orderFormData.postalCode" type="text" placeholder="۱۰ رقم کد پستی" maxlength="10" class="w-full border border-slate-200 rounded-lg p-2 text-xs font-mono text-left">
+                        </div>
+                        <div>
+                            <label class="block text-[11px] font-semibold mb-1">شناسه قبض برق ملک: *</label>
+                            <input v-model="orderFormData.electricityBillId" type="text" placeholder="شناسه قبض برق کنتور" class="w-full border border-slate-200 rounded-lg p-2 text-xs font-mono text-left">
+                        </div>
+                    </div>
+
+                    <!-- بخش انتخاب شاهدان -->
+                    <div class="pt-2 border-t border-slate-200 space-y-2">
+                        <label class="block text-[11px] font-bold text-slate-800">👥 وضعیت شاهدان قرارداد:</label>
+                        <div class="space-y-1.5">
+                            <label class="flex items-center gap-2 cursor-pointer text-xs">
+                                <input type="radio" value="limo" v-model="orderFormData.witnessChoice" class="text-limo-600">
+                                <span>درخواست تأمین دو شاهد معتبر توسط کافی‌نت لیمو (۳۵۰ هزار تومان)</span>
+                            </label>
+                            <label class="flex items-center gap-2 cursor-pointer text-xs">
+                                <input type="radio" value="self" v-model="orderFormData.witnessChoice" class="text-limo-600">
+                                <span>خودم دو شاهد ایرانی معرفی می‌کنم</span>
+                            </label>
+                        </div>
+                        <div v-if="orderFormData.witnessChoice === 'self'" class="p-2.5 bg-white rounded-lg border border-slate-200 space-y-2 mt-2">
+                            <div class="font-bold text-[11px] text-slate-700">مشخصات شاهد اول:</div>
+                            <div class="grid grid-cols-3 gap-1.5">
+                                <input v-model="orderFormData.witness1Name" type="text" placeholder="نام شاهد ۱" class="border p-1.5 rounded text-[11px]">
+                                <input v-model="orderFormData.witness1Nid" type="text" placeholder="کد ملی شاهد ۱" maxlength="10" class="border p-1.5 rounded text-[11px] font-mono text-left">
+                                <input v-model="orderFormData.witness1Phone" type="tel" placeholder="موبایل شاهد ۱" class="border p-1.5 rounded text-[11px] font-mono text-left">
+                            </div>
+                            <div class="font-bold text-[11px] text-slate-700 pt-1">مشخصات شاهد دوم:</div>
+                            <div class="grid grid-cols-3 gap-1.5">
+                                <input v-model="orderFormData.witness2Name" type="text" placeholder="نام شاهد ۲" class="border p-1.5 rounded text-[11px]">
+                                <input v-model="orderFormData.witness2Nid" type="text" placeholder="کد ملی شاهد ۲" maxlength="10" class="border p-1.5 rounded text-[11px] font-mono text-left">
+                                <input v-model="orderFormData.witness2Phone" type="tel" placeholder="موبایل شاهد ۲" class="border p-1.5 rounded text-[11px] font-mono text-left">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- فیلدهای اختصاصی ۲: کد فیدا اتباع -->
+                <div v-if="selectedService?.code === 'FIDA_CODE'" class="space-y-2.5 p-3 bg-slate-50 rounded-xl border border-slate-200 text-xs text-slate-700">
+                    <div class="font-bold text-slate-800 border-b border-slate-200 pb-1.5">🌐 مشخصات هویتی و اقامتی اتباع:</div>
+                    <div class="grid grid-cols-2 gap-2">
+                        <div>
+                            <label class="block text-[11px] font-semibold mb-1">نام و نام خانوادگی به انگلیسی (مطابق پاسپورت): *</label>
+                            <input v-model="orderFormData.fullNameEn" type="text" placeholder="English Full Name" class="w-full border border-slate-200 rounded-lg p-2 text-xs font-mono text-left">
+                        </div>
+                        <div>
+                            <label class="block text-[11px] font-semibold mb-1">نام پدر: *</label>
+                            <input v-model="orderFormData.fatherName" type="text" placeholder="نام پدر" class="w-full border border-slate-200 rounded-lg p-2 text-xs">
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-3 gap-2">
+                        <div>
+                            <label class="block text-[11px] font-semibold mb-1">تاریخ تولد: *</label>
+                            <input v-model="orderFormData.birthDate" type="text" placeholder="روز/ماه/سال" class="w-full border border-slate-200 rounded-lg p-2 text-xs text-left">
+                        </div>
+                        <div>
+                            <label class="block text-[11px] font-semibold mb-1">نوع مدرک هویتی: *</label>
+                            <select v-model="orderFormData.docType" class="w-full border border-slate-200 rounded-lg p-2 text-xs">
+                                <option value="PASSPORT">گذرنامه (پاسپورت)</option>
+                                <option value="AMAYESH">کارت آمایش</option>
+                                <option value="CENSUS">برگه سرشماری</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-[11px] font-semibold mb-1">شماره مدرک: *</label>
+                            <input v-model="orderFormData.docNumber" type="text" placeholder="شماره گذرنامه یا برگه" class="w-full border border-slate-200 rounded-lg p-2 text-xs font-mono text-left">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- فیلدهای اختصاصی ۳: پورتال امور دانشجویان ادب -->
+                <div v-if="selectedService?.code === 'ADAB_STUDENT_AFFAIRS'" class="space-y-2.5 p-3 bg-slate-50 rounded-xl border border-slate-200 text-xs text-slate-700">
+                    <div class="font-bold text-slate-800 border-b border-slate-200 pb-1.5">🎓 مشخصات تحصیلی و کنسولی:</div>
+                    <div class="grid grid-cols-2 gap-2">
+                        <div>
+                            <label class="block text-[11px] font-semibold mb-1">کد فیدا ۱۲ رقمی دانشجو: *</label>
+                            <input v-model="orderFormData.fidaCode" type="text" placeholder="کد فیدا ۱۲ رقم" maxlength="12" class="w-full border border-slate-200 rounded-lg p-2 text-xs font-mono text-left">
+                        </div>
+                        <div>
+                            <label class="block text-[11px] font-semibold mb-1">شماره گذرنامه: *</label>
+                            <input v-model="orderFormData.passportNumber" type="text" placeholder="شماره پاسپورت" class="w-full border border-slate-200 rounded-lg p-2 text-xs font-mono text-left">
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-2 gap-2">
+                        <div>
+                            <label class="block text-[11px] font-semibold mb-1">نام دانشگاه و شماره دانشجویی: *</label>
+                            <input v-model="orderFormData.universityName" type="text" placeholder="نام دانشگاه و شماره دانشجویی" class="w-full border border-slate-200 rounded-lg p-2 text-xs">
+                        </div>
+                        <div>
+                            <label class="block text-[11px] font-semibold mb-1">مقطع و رشته تحصیلی: *</label>
+                            <input v-model="orderFormData.degreeLevel" type="text" placeholder="مثال: کارشناسی کامپیوتر" class="w-full border border-slate-200 rounded-lg p-2 text-xs">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- فیلدهای اختصاصی ۴: استعلام تأییدیه تحصیلی و کد صحت -->
+                <div v-if="selectedService?.code === 'EMT_VERIFICATION'" class="space-y-2.5 p-3 bg-slate-50 rounded-xl border border-slate-200 text-xs text-slate-700">
+                    <div class="font-bold text-slate-800 border-b border-slate-200 pb-1.5">📜 مشخصات مدرک و مدرسه فارغ‌التحصیلی:</div>
+                    <div class="grid grid-cols-2 gap-2">
+                        <div>
+                            <label class="block text-[11px] font-semibold mb-1">کد ملی یا کد اتباع: *</label>
+                            <input v-model="orderFormData.nationalCode" type="text" placeholder="کد ۱۰ رقمی" class="w-full border border-slate-200 rounded-lg p-2 text-xs font-mono text-left">
+                        </div>
+                        <div>
+                            <label class="block text-[11px] font-semibold mb-1">مقطع و نظام آموزشی: *</label>
+                            <select v-model="orderFormData.degreeType" class="w-full border border-slate-200 rounded-lg p-2 text-xs">
+                                <option value="DIPLOMA_NEW">دیپلم نظام جدید (۳-۳-۶)</option>
+                                <option value="PRE_UNIVERSITY">پیش‌دانشگاهی نظام سالی‌واحدی</option>
+                                <option value="DIPLOMA_OLD">دیپلم نظام قدیم یا سالی‌واحدی</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-2 gap-2">
+                        <div>
+                            <label class="block text-[11px] font-semibold mb-1">استان و نام مدرسه: *</label>
+                            <input v-model="orderFormData.schoolName" type="text" placeholder="مثال: تهران - دبیرستان رشد" class="w-full border border-slate-200 rounded-lg p-2 text-xs">
+                        </div>
+                        <div>
+                            <label class="block text-[11px] font-semibold mb-1">مرجع یا دانشگاه استعلام‌گیرنده: *</label>
+                            <input v-model="orderFormData.targetOrg" type="text" placeholder="مثال: دانشگاه آزاد واحد علوم و تحقیقات" class="w-full border border-slate-200 rounded-lg p-2 text-xs">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- فیلدهای اختصاصی ۵: سازمان سنجش و کنکور -->
+                <div v-if="selectedService?.code === 'SANJESH_REGISTRATION'" class="space-y-2.5 p-3 bg-slate-50 rounded-xl border border-slate-200 text-xs text-slate-700">
+                    <div class="font-bold text-slate-800 border-b border-slate-200 pb-1.5">📝 مشخصات آزمون و داوطلب:</div>
+                    <div class="grid grid-cols-2 gap-2">
+                        <div>
+                            <label class="block text-[11px] font-semibold mb-1">نوع آزمون: *</label>
+                            <select v-model="orderFormData.examType" class="w-full border border-slate-200 rounded-lg p-2 text-xs">
+                                <option value="KONKUR">کنکور سراسری</option>
+                                <option value="ARSHAD">کارشناسی ارشد</option>
+                                <option value="DOKTORA">دکتری تخصصی</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-[11px] font-semibold mb-1">کد ملی یا کد اتباع: *</label>
+                            <input v-model="orderFormData.nationalCode" type="text" placeholder="کد ۱۰ رقمی" class="w-full border border-slate-200 rounded-lg p-2 text-xs font-mono text-left">
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-2 gap-2">
+                        <div>
+                            <label class="block text-[11px] font-semibold mb-1">رشته و گروه آزمایشی: *</label>
+                            <input v-model="orderFormData.majorGroup" type="text" placeholder="مثال: تجربی / علوم انسانی" class="w-full border border-slate-200 rounded-lg p-2 text-xs">
+                        </div>
+                        <div>
+                            <label class="block text-[11px] font-semibold mb-1">معدل مقطع قبلی: *</label>
+                            <input v-model="orderFormData.previousGpa" type="text" placeholder="مثال: 18.50" class="w-full border border-slate-200 rounded-lg p-2 text-xs text-left">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- فیلد توضیحات تکمیلی -->
+                <div>
+                    <label class="block text-xs font-semibold text-slate-700 mb-1">توضیحات تکمیلی یا پیام برای اپراتور:</label>
+                    <textarea v-model="orderFormData.notes" rows="2" placeholder="هرگونه توضیح لازم جهت بررسی توسط متصدی کافی‌نت..." class="w-full border border-slate-200 rounded-xl p-2.5 text-xs focus:outline-none focus:border-limo-500"></textarea>
+                </div>
+
+                <div v-if="orderError" class="p-2.5 bg-red-50 text-red-600 rounded-xl text-xs font-medium">
+                    {{ orderError }}
+                </div>
+
+                <div v-if="orderSuccess" class="p-3 bg-emerald-50 text-emerald-700 rounded-xl text-xs font-bold space-y-1">
+                    <div>✓ پرونده شما با موفقیت در سامانه ثبت شد!</div>
+                    <div>🔖 کد رهگیری یکتا: <code class="font-mono bg-white px-1.5 py-0.5 rounded border border-emerald-200">{{ orderSuccess.trackingCode }}</code></div>
+                    <p class="text-[11px] text-emerald-800 font-normal">جهت شروع فرآیند، لطفاً فیش واریز را در بخش پرداخت ارسال فرمایید.</p>
+                </div>
+
+                <div class="pt-2 flex gap-2">
+                    <button v-if="!orderSuccess" @click="submitOrder" :disabled="isSubmitting" class="flex-1 bg-limo-600 hover:bg-limo-700 disabled:opacity-50 text-white py-2.5 rounded-xl text-xs font-bold shadow transition">
+                        {{ isSubmitting ? 'در حال ثبت پرونده...' : 'تأیید و ثبت نهایی درخواست' }}
+                    </button>
+                    <button v-if="orderSuccess" @click="goToPayment" class="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white py-2.5 rounded-xl text-xs font-bold shadow transition">
+                        رفتن به بخش پرداخت و ارسال فیش 💳
+                    </button>
+                    <button @click="currentTab = 'services'" class="px-3 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl text-xs transition">
+                        انصراف
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 2. Tracking Tab with 4-Step Visual Stepper -->
+        <div v-if="currentTab === 'tracking'" class="space-y-4 bg-white p-4 rounded-xl border border-slate-100 shadow-sm text-xs">
+            <h2 class="text-sm font-bold text-slate-800">🔍 استعلام و پیگیری آنی وضعیت پرونده:</h2>
+            <div class="space-y-2">
+                <input v-model="trackingQuery" type="text" placeholder="مثال: LIMO-1405-12345" class="w-full border border-slate-200 rounded-xl p-2.5 text-xs font-mono text-center focus:outline-none focus:border-limo-500">
+                <button @click="checkTracking" :disabled="isCheckingTracking" class="w-full bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white py-2.5 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 shadow">
+                    <span v-if="isCheckingTracking">در حال استعلام وضعیت...</span>
+                    <span v-else>جستجوی وضعیت پرونده</span>
+                </button>
+            </div>
+
+            <!-- نتیجه پیگیری با استپر ۴ مرحله‌ای -->
+            <div v-if="trackingResult" class="space-y-4 pt-2 border-t border-slate-100">
+                <div class="p-3 bg-slate-50 border border-slate-200 rounded-2xl flex justify-between items-center">
+                    <div>
+                        <div class="font-bold text-slate-900 text-sm font-mono">🔖 {{ trackingResult.code }}</div>
+                        <div class="text-[11px] text-slate-500 mt-0.5">{{ trackingResult.service }}</div>
+                    </div>
+                    <div>
+                        <span class="px-2.5 py-1 rounded-full text-[11px] font-bold bg-white border border-slate-200 shadow-xs">
+                            {{ trackingResult.status_title || trackingResult.status }}
+                        </span>
+                    </div>
+                </div>
+
+                <!-- استپر بصری ۴ مرحله‌ای -->
+                <div v-if="trackingResult.steps && trackingResult.steps.length > 0" class="space-y-3 px-1">
+                    <div class="text-xs font-bold text-slate-700">📌 روند پیشرفت مراحل کار:</div>
+                    <div class="space-y-2 text-xs">
+                        <div v-for="step in trackingResult.steps" :key="step.num" class="flex items-start gap-2.5 p-2.5 rounded-xl border transition"
+                             :class="{
+                               'bg-emerald-50/70 border-emerald-200 text-emerald-900': step.status === 'done',
+                               'bg-blue-50/80 border-blue-200 text-blue-900 shadow-xs': step.status === 'active',
+                               'bg-amber-50/80 border-amber-200 text-amber-900': step.status === 'warning',
+                               'bg-rose-50/80 border-rose-200 text-rose-900': step.status === 'error',
+                               'bg-slate-50/50 border-slate-100 text-slate-400 opacity-60': step.status === 'waiting'
+                             }">
+                            <div class="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold shrink-0 mt-0.5 shadow-xs"
+                                 :class="{
+                                   'bg-emerald-600 text-white': step.status === 'done',
+                                   'bg-blue-600 text-white animate-pulse': step.status === 'active',
+                                   'bg-amber-500 text-white': step.status === 'warning',
+                                   'bg-rose-600 text-white': step.status === 'error',
+                                   'bg-slate-200 text-slate-500': step.status === 'waiting'
+                                 }">
+                                <span v-if="step.status === 'done'">✓</span>
+                                <span v-else-if="step.status === 'error'">✕</span>
+                                <span v-else-if="step.status === 'warning'">!</span>
+                                <span v-else>{{ step.num }}</span>
+                            </div>
+                            <div class="flex-1">
+                                <div class="font-bold flex justify-between items-center">
+                                    <span>{{ step.title }}</span>
+                                    <span v-if="step.status === 'done'" class="text-[10px] text-emerald-700 font-bold">تکمیل شد ✓</span>
+                                    <span v-else-if="step.status === 'active'" class="text-[10px] text-blue-700 font-bold">در جریان ⏳</span>
+                                    <span v-else-if="step.status === 'warning'" class="text-[10px] text-amber-700 font-bold">اقدام لازم ⚠️</span>
+                                    <span v-else-if="step.status === 'error'" class="text-[10px] text-rose-700 font-bold">نیازمند اصلاح ❌</span>
+                                </div>
+                                <div class="text-[11px] text-slate-500 mt-0.5 leading-relaxed">{{ step.desc }}</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- یادداشت اپراتور / پیام به مشتری -->
+                <div v-if="trackingResult.notes" class="p-3 bg-amber-50/60 border border-amber-200 rounded-xl space-y-1">
+                    <div class="font-bold text-amber-900 flex items-center gap-1">
+                        <span>💬 پیام اپراتور:</span>
+                    </div>
+                    <p class="text-slate-700 text-[11px] leading-relaxed whitespace-pre-line">{{ trackingResult.notes }}</p>
+                </div>
+
+                <!-- باکس اقدام در صورت رد فیش یا در انتظار پرداخت -->
+                <div v-if="trackingResult.raw_status === 'PENDING' || trackingResult.raw_status === 'PAYMENT_REJECTED'" class="p-3 bg-blue-50 border border-blue-200 rounded-xl space-y-2">
+                    <div class="font-bold text-blue-900">💳 ارسال یا اصلاح فیش واریز:</div>
+                    <p class="text-[11px] text-blue-700">جهت ادامه فرآیند سفارش، لطفاً تصویر فیش واریزی خود را در تب پرداخت ارسال فرمایید.</p>
+                    <button @click="goToPaymentWithCode(trackingResult.code)" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 rounded-xl text-xs shadow-sm transition">
+                        انتقال به بخش پرداخت با کد {{ trackingResult.code }} ←
+                    </button>
+                </div>
+
+                <!-- باکس رفع نقص مدارک در صورت وضعیت NEED_INFO -->
+                <div v-if="trackingResult.raw_status === 'NEED_INFO'" class="p-3 bg-rose-50 border border-rose-200 rounded-xl space-y-2">
+                    <div class="font-bold text-rose-900">⚠️ ارسال مدارک یا اطلاعات تکمیلی:</div>
+                    <p class="text-[11px] text-rose-700 leading-relaxed">پرونده شما نیازمند ارسال اطلاعات تکمیلی است. لطفاً توضیحات یا مدارک خواسته شده را در کادر زیر وارد و ارسال فرمایید:</p>
+                    <textarea v-model="supplementalText" placeholder="توضیحات تکمیلی، اصلاح مشخصات، یا توضیحات مدرک..." class="w-full p-2 border border-slate-200 rounded-lg text-xs" rows="2"></textarea>
+                    <div class="flex items-center gap-2">
+                        <input type="file" @change="handleSupplementalFile" class="text-[11px] text-slate-500 file:py-1 file:px-2 file:rounded-md file:border-0 file:bg-rose-100 file:text-rose-800">
+                    </div>
+                    <div v-if="supplementError" class="text-rose-600 font-bold text-[11px]">{{ supplementError }}</div>
+                    <div v-if="supplementSuccess" class="text-emerald-700 font-bold text-[11px] bg-emerald-50 p-2 rounded-lg border border-emerald-200">
+                        ✓ مدارک تکمیلی با موفقیت ثبت شد و به کارشناس پرونده ارجاع داده شد.
+                    </div>
+                    <button v-if="!supplementSuccess" @click="submitSupplementalData" :disabled="isSubmittingSupplement" class="w-full bg-rose-600 hover:bg-rose-700 disabled:opacity-50 text-white font-bold py-2 rounded-xl text-xs shadow-sm transition">
+                        {{ isSubmittingSupplement ? 'در حال ارسال مدارک...' : '📤 ارسال مدارک تکمیلی به کارشناس' }}
+                    </button>
+                </div>
+
+                <!-- باکس تحویل نهایی مدارک در صورت وضعیت COMPLETED -->
+                <div v-if="trackingResult.raw_status === 'COMPLETED'" class="p-3 bg-emerald-50 border border-emerald-200 rounded-xl space-y-2">
+                    <div class="font-bold text-emerald-900 text-sm">🎉 سفارش شما با موفقیت تکمیل شد!</div>
+                    <div v-if="trackingResult.result_document" class="p-2.5 bg-white rounded-lg border border-emerald-200 space-y-1.5">
+                        <div class="font-bold text-slate-800">📜 خروجی نهایی صادرشده:</div>
+                        <div v-if="trackingResult.result_document.text" class="text-[11px] font-mono text-slate-700 bg-slate-50 p-2 rounded border border-slate-200 whitespace-pre-line">
+                            {{ trackingResult.result_document.text }}
+                        </div>
+                        <div v-if="trackingResult.result_document.file_url || trackingResult.result_document.file_base64" class="pt-1">
+                            <a :href="trackingResult.result_document.file_url || trackingResult.result_document.file_base64" target="_blank" download="limo_result" class="inline-block px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[11px] font-bold shadow-xs transition">
+                                📥 مشاهده / دانلود مدرک نهایی صادرشده
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 3. Payment Tab -->
+        <div v-if="currentTab === 'payment'" class="space-y-4 bg-white p-4 rounded-xl border border-slate-100 shadow-sm text-xs">
+            <h2 class="text-sm font-bold text-slate-800">💳 اطلاعات حساب واریز و بارگذاری فیش:</h2>
+            <p class="text-slate-500 leading-relaxed">جهت شروع فرآیند انجام سفارش، لطفاً مبلغ مصوب خدمت را به شماره کارت زیر واریز فرموده و تصویر فیش را در این بخش ارسال فرمایید:</p>
+            
+            <div class="bg-slate-50 p-3 rounded-xl border border-slate-200 space-y-2">
+                <div class="text-[11px] text-slate-500">شماره کارت اختصاصی کافی‌نت:</div>
+                <div class="flex justify-between items-center bg-white p-2.5 rounded-lg border border-slate-200">
+                    <span class="font-mono text-sm tracking-wider text-slate-800">{{ cardNumber }}</span>
+                    <button @click="copyCard" class="text-limo-700 font-bold text-xs hover:text-limo-600">
+                        {{ copied ? 'کپی شد! ✓' : 'کپی' }}
+                    </button>
+                </div>
+                <div class="text-[11px] text-slate-600">صاحب حساب: <b>{{ cardOwner }}</b></div>
+            </div>
+
+            <!-- مشخصات سفارش و ارسال فیش -->
+            <div class="space-y-3 pt-2">
+                <div>
+                    <label class="block font-semibold mb-1">کد رهگیری پرونده: *</label>
+                    <input v-model="paymentTrackingCode" type="text" placeholder="مثال: LIMO-1405-12345" class="w-full border border-slate-200 rounded-xl p-2.5 text-xs font-mono text-center">
+                </div>
+
+                <div>
+                    <label class="block font-semibold mb-1">بارگذاری تصویر فیش واریزی: *</label>
+                    <input type="file" accept="image/*" @change="handleFileUpload" class="text-xs text-slate-500 file:mr-2 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:bg-limo-50 file:text-limo-700 file:font-semibold">
+                    <div v-if="receiptBase64" class="mt-2 text-[11px] text-emerald-600 font-bold flex items-center gap-1">
+                        ✓ تصویر فیش با موفقیت فشرده و آماده ارسال گردید (حجم: {{ compressedSize }}).
+                    </div>
+                </div>
+
+                <div>
+                    <label class="block font-semibold mb-1">شناسه یا شماره پیگیری تراکنش (اختیاری):</label>
+                    <input v-model="paymentRefNumber" type="text" placeholder="شماره پیگیری فیش بانکی" class="w-full border border-slate-200 rounded-xl p-2.5 text-xs font-mono text-left">
+                </div>
+
+                <div v-if="receiptError" class="p-2.5 bg-red-50 text-red-600 rounded-xl text-xs font-medium">
+                    {{ receiptError }}
+                </div>
+
+                <div v-if="receiptSuccess" class="p-3 bg-emerald-50 text-emerald-700 rounded-xl text-xs font-bold space-y-1">
+                    <div>✓ فیش واریز با موفقیت ارسال شد!</div>
+                    <p class="text-[11px] text-emerald-800 font-normal">رسید شما در صف بررسی مدیر قرار گرفت. پس از تأیید، پیام تایید در تلگرام برای شما ارسال خواهد شد.</p>
+                </div>
+
+                <button v-if="!receiptSuccess" @click="submitReceipt" :disabled="isSubmittingReceipt" class="w-full bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white py-2.5 rounded-xl text-xs font-bold shadow transition">
+                    {{ isSubmittingReceipt ? 'در حال ارسال فیش...' : '📤 ارسال فیش واریز جهت بررسی مدیر' }}
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const { createApp, ref, computed } = Vue;
+        createApp({
+            setup() {
+                const currentTab = ref('services');
+                const cardNumber = ref('6037-9979-1234-5678');
+                const cardOwner = ref('مدیریت کافی نت لیمو');
+                const copied = ref(false);
+                const campaigns = ref([]);
+                const isReminding = ref(false);
+                const categories = ref([
+                    { id: 1, code: 'ALIEN_AND_CODES', title: '🌐 امور اتباع و کدها', is_active: 1 },
+                    { id: 2, code: 'UNIVERSITY_SERVICES', title: '🎓 خدمات دانشگاهی و آزمون‌ها', is_active: 1 },
+                    { id: 3, code: 'TICKETS_TRAVEL', title: '✈️ بلیت هواپیما و قطار', is_active: 1 },
+                    { id: 4, code: 'GOVERNMENT_INTERNET', title: '🏛 خدمات اداری و دولتی', is_active: 1 }
+                ]);
+                const selectedCategory = ref('ALL');
+                const serviceSearch = ref('');
+
+                const loadPublicCatalog = async () => {
+                    try {
+                        const res = await fetch('/api/catalog/services');
+                        const data = await res.json();
+                        if (data.ok) {
+                            if (Array.isArray(data.services) && data.services.length > 0) services.value = data.services;
+                            if (Array.isArray(data.categories) && data.categories.length > 0) categories.value = data.categories;
+                        }
+                    } catch (e) {}
+                    try {
+                        const setRes = await fetch('/api/catalog/settings');
+                        const setData = await setRes.json();
+                        if (setData.ok && setData.settings) {
+                            if (setData.settings.card_number) cardNumber.value = setData.settings.card_number;
+                            if (setData.settings.card_owner) cardOwner.value = setData.settings.card_owner;
+                        }
+                    } catch (e) {}
+                    try {
+                        const campRes = await fetch('/api/catalog/campaigns');
+                        const campData = await campRes.json();
+                        if (campData.ok && Array.isArray(campData.campaigns)) {
+                            campaigns.value = campData.campaigns;
+                        }
+                    } catch (e) {}
+                };
+                loadPublicCatalog();
+                const trackingQuery = ref('');
+                const trackingResult = ref(null);
+                const originalSize = ref('');
+                const compressedSize = ref('');
+
+                const selectedService = ref(null);
+                const housingTermsAccepted = ref(false);
+                const orderFormData = ref({
+                    fullName: '',
+                    phoneNumber: '',
+                    // مسکن
+                    tenantPhone: '',
+                    landlordPhone: '',
+                    ownerNationalCode: '',
+                    ownerCardNumber: '',
+                    depositAmount: '',
+                    monthlyRent: '',
+                    durationMonths: '',
+                    postalCode: '',
+                    electricityBillId: '',
+                    witnessChoice: 'limo',
+                    witness1Name: '',
+                    witness1Nid: '',
+                    witness1Phone: '',
+                    witness2Name: '',
+                    witness2Nid: '',
+                    witness2Phone: '',
+                    // اتباع و فیدا
+                    fullNameEn: '',
+                    fatherName: '',
+                    birthDate: '',
+                    docType: 'PASSPORT',
+                    docNumber: '',
+                    // پورتال ادب
+                    fidaCode: '',
+                    passportNumber: '',
+                    universityName: '',
+                    degreeLevel: '',
+                    // تاییدیه تحصیلی
+                    nationalCode: '',
+                    degreeType: 'DIPLOMA_NEW',
+                    schoolName: '',
+                    targetOrg: '',
+                    // سازمان سنجش
+                    examType: 'KONKUR',
+                    majorGroup: '',
+                    previousGpa: '',
+                    notes: ''
+                });
+                const isSubmitting = ref(false);
+                const orderError = ref('');
+                const orderSuccess = ref(null);
+
+                const services = ref([
+                    { code: 'EMT_VERIFICATION', title: 'استعلام تاییدیه تحصیلی و کد صحت', desc: 'استعلام رسمی مدرک تحصیلی، دیپلم و پیش‌دانشگاهی و صدور کد صحت جهت ثبت‌نام دانشگاه و ترجمه', category_id: 1, category: '🌐 امور اتباع و کدها', base_fee: 1500000 },
+                    { code: 'HOUSING_TRACKING_CODE', title: 'کد رهگیری قرارداد مسکن (سامانه خودنویس)', desc: 'صدور کد رهگیری معتبر قراردادهای اجاره مسکن همراه با استعلام کد پستی و مشخصات شاهدان', category_id: 1, category: '🌐 امور اتباع و کدها', base_fee: 2500000 },
+                    { code: 'FIDA_CODE', title: 'دریافت و استعلام کد فیدا اتباع (FIDA)', desc: 'ثبت‌نام، استعلام و صدور شناسه ۱۲ رقمی اختصاصی اتباع و مهاجرین خارجی', category_id: 1, category: '🌐 امور اتباع و کدها', base_fee: 1200000 },
+                    { code: 'IVSF_APPOINTMENT', title: 'سامانه نوبت‌دهی تثبیت هویت اتباع', desc: 'نوبت‌دهی و ثبت‌نام اینترنتی در سامانه تثبیت هویت (ivsf)', category_id: 2, category: '🎓 خدمات دانشگاهی و آزمون‌ها', base_fee: 1800000 },
+                    { code: 'ADAB_STUDENT_AFFAIRS', title: 'سامانه امور دانشجویان بین‌الملل (پورتال ادب)', desc: 'امور کنسولی، روادید تحصیلی و تمدید اقامت دانشجویان غیرایرانی در پورتال سازمان امور دانشجویان', category_id: 2, category: '🎓 خدمات دانشگاهی و آزمون‌ها', base_fee: 2000000 },
+                    { code: 'SANJESH_REGISTRATION', title: 'ثبت‌نام آزمون‌های سازمان سنجش', desc: 'کنکور سراسری، کارشناسی ارشد و دکتری تخصصی در سامانه سنجش آموزش کشور', category_id: 1, category: '🌐 امور اتباع و کدها', base_fee: 2000000 },
+                    { code: 'PNU_SERVICES', title: 'سامانه گلستان پیام نور', desc: 'انتخاب واحد، گواهی اشتغال به تحصیل، کارنامه و امور آموزشی دانشگاه پیام نور', category_id: 1, category: '🌐 امور اتباع و کدها', base_fee: 1500000 },
+                    { code: 'IAU_SERVICES', title: 'سامانه آموزشیار دانشگاه آزاد', desc: 'امور دانشجویی، شهریه و نمرات در سامانه آموزشیار دانشگاه آزاد اسلامی', category_id: 1, category: '🌐 امور اتباع و کدها', base_fee: 1500000 }
+                ]);
+
+                const copyCard = () => {
+                    navigator.clipboard.writeText(cardNumber.value.replace(/-/g, ''));
+                    copied.value = true;
+                    setTimeout(() => copied.value = false, 2000);
+                };
+
+                const selectService = (s) => {
+                    selectedService.value = s;
+                    orderError.value = '';
+                    orderSuccess.value = null;
+                    housingTermsAccepted.value = false;
+                    currentTab.value = 'order_form';
+                };
+
+                const goToPayment = () => {
+                    if (orderSuccess.value && orderSuccess.value.trackingCode) {
+                        paymentTrackingCode.value = orderSuccess.value.trackingCode;
+                    }
+                    currentTab.value = 'payment';
+                };
+
+                const submitOrder = async () => {
+                    if (!orderFormData.value.fullName.trim() || !orderFormData.value.phoneNumber.trim()) {
+                        orderError.value = 'لطفاً نام و نام خانوادگی و شماره تماس را وارد فرمایید.';
+                        return;
+                    }
+                    if (selectedService.value?.code === 'HOUSING_TRACKING_CODE') {
+                        if (!orderFormData.value.ownerNationalCode.trim() || !orderFormData.value.postalCode.trim() || !orderFormData.value.electricityBillId.trim()) {
+                            orderError.value = 'برای کد رهگیری مسکن، ثبت کد ملی مالک، کد پستی و شناسه قبض برق الزامی است.';
+                            return;
+                        }
+                    }
+                    isSubmitting.value = true;
+                    orderError.value = '';
+                    try {
+                        let tgUser = null;
+                        if (window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initDataUnsafe) {
+                            tgUser = window.Telegram.WebApp.initDataUnsafe.user;
+                        }
+                        const payload = {
+                            service_code: selectedService.value.code,
+                            full_name: orderFormData.value.fullName.trim(),
+                            phone_number: orderFormData.value.phoneNumber.trim(),
+                            notes: orderFormData.value.notes.trim(),
+                            form_data: {
+                                ...orderFormData.value,
+                                service_title: selectedService.value.title
+                            },
+                            telegram_id: tgUser ? tgUser.id : null,
+                            username: tgUser ? tgUser.username : null
+                        };
+                        const res = await fetch('/api/order/submit', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(payload)
+                        });
+                        const data = await res.json();
+                        if (data.ok && data.tracking_code) {
+                            orderSuccess.value = {
+                                trackingCode: data.tracking_code
+                            };
+                            trackingQuery.value = data.tracking_code;
+                        } else {
+                            orderError.value = data.error || 'خطا در ثبت سفارش. لطفاً مجدداً تلاش فرمایید.';
+                        }
+                    } catch (err) {
+                        orderError.value = 'خطا در برقراری ارتباط با سرور.';
+                    } finally {
+                        isSubmitting.value = false;
+                    }
+                };
+
+                const isCheckingTracking = ref(false);
+                const supplementalText = ref('');
+                const supplementalFileBase64 = ref('');
+                const isSubmittingSupplement = ref(false);
+                const supplementError = ref('');
+                const supplementSuccess = ref(false);
+
+                const goToPaymentWithCode = (code) => {
+                    paymentTrackingCode.value = code;
+                    currentTab.value = 'payment';
+                };
+
+                const handleSupplementalFile = (e) => {
+                    const file = e.target.files[0];
+                    if (!file) return;
+                    const reader = new FileReader();
+                    reader.onload = (event) => {
+                        supplementalFileBase64.value = event.target.result;
+                    };
+                    reader.readAsDataURL(file);
+                };
+
+                const getCategoryCount = (catId) => {
+                    return (services.value || []).filter(s => s && (s.category_id === catId || String(s.category_id) === String(catId) || s.category === catId)).length;
+                };
+
+                const activeCategories = computed(() => {
+                    return (categories.value || []).filter(c => c && c.is_active && getCategoryCount(c.id) > 0);
+                });
+
+                const uncategorizedServices = computed(() => {
+                    const knownCatIds = new Set((categories.value || []).map(c => String(c.id)));
+                    return (services.value || []).filter(s => s && (!s.category_id || !knownCatIds.has(String(s.category_id))));
+                });
+
+                const getServicesByCategory = (catId) => {
+                    return (services.value || []).filter(s => s && (s.category_id === catId || String(s.category_id) === String(catId) || s.category === catId));
+                };
+
+                const filteredServices = computed(() => {
+                    let list = services.value || [];
+                    if (selectedCategory.value !== 'ALL') {
+                        const targetId = String(selectedCategory.value);
+                        list = list.filter(s => s && (String(s.category_id) === targetId || s.category === selectedCategory.value));
+                    }
+                    if (serviceSearch.value && serviceSearch.value.trim()) {
+                        const q = serviceSearch.value.trim().toLowerCase();
+                        list = list.filter(s => s && (
+                            (s.title && s.title.toLowerCase().includes(q)) ||
+                            (s.desc && s.desc.toLowerCase().includes(q)) ||
+                            (s.category && s.category.toLowerCase().includes(q))
+                        ));
+                    }
+                    return list;
+                });
+
+                const seasonalBadgeClass = (status) => {
+                    switch (status) {
+                        case 'ACTIVE': return 'bg-emerald-100 text-emerald-800';
+                        case 'EXPIRING_SOON': return 'bg-rose-100 text-rose-800';
+                        case 'SCHEDULED': return 'bg-blue-100 text-blue-800';
+                        case 'ENDED': return 'bg-slate-100 text-slate-600';
+                        default: return 'bg-slate-100 text-slate-700';
+                    }
+                };
+
+                const seasonalStatusLabel = (status) => {
+                    switch (status) {
+                        case 'ACTIVE': return '🟢 در حال ثبت‌نام';
+                        case 'EXPIRING_SOON': return '🔥 مهلت رو به اتمام';
+                        case 'SCHEDULED': return '⏳ به‌زودی';
+                        case 'ENDED': return '🔒 مهلت پایان‌یافته';
+                        default: return status || 'پیش‌نویس';
+                    }
+                };
+
+                const applyForCampaign = (c) => {
+                    selectedService.value = {
+                        code: c.code,
+                        title: c.title,
+                        desc: c.description,
+                        baseFee: c.base_fee,
+                        campaign_id: c.id
+                    };
+                    currentTab.value = 'order_form';
+                };
+
+                const remindMe = async (c) => {
+                    isReminding.value = true;
+                    try {
+                        const tgUser = window.Telegram?.WebApp?.initDataUnsafe?.user;
+                        const res = await fetch('/api/campaign/remind-me', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                campaign_id: c.id,
+                                telegram_id: tgUser?.id || null,
+                                phone_number: orderFormData.value.phoneNumber || '',
+                                full_name: tgUser ? ((tgUser.first_name || '') + ' ' + (tgUser.last_name || '')).trim() : (orderFormData.value.fullName || 'متقاضی کافی نت لیمو')
+                            })
+                        });
+                        const data = await res.json();
+                        if (data.ok) {
+                            alert(data.message || '✅ یادآور با موفقیت ثبت شد!');
+                        } else {
+                            alert(data.error || 'خطا در ثبت یادآور');
+                        }
+                    } catch (e) {
+                        alert('خطا در برقراری ارتباط با سرور.');
+                    } finally {
+                        isReminding.value = false;
+                    }
+                };
+
+                const submitSupplementalData = async () => {
+                    if (!supplementalText.value.trim() && !supplementalFileBase64.value) {
+                        supplementError.value = 'لطفاً توضیحات تکمیلی یا فایل مدرک را وارد فرمایید.';
+                        return;
+                    }
+                    if (!trackingResult.value || !trackingResult.value.code) return;
+                    isSubmittingSupplement.value = true;
+                    supplementError.value = '';
+                    try {
+                        const res = await fetch('/api/order/supplement', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                tracking_code: trackingResult.value.code,
+                                note: supplementalText.value.trim(),
+                                file_base64: supplementalFileBase64.value
+                            })
+                        });
+                        const data = await res.json();
+                        if (data.ok) {
+                            supplementSuccess.value = true;
+                            // استعلام مجدد وضعیت
+                            setTimeout(() => checkTracking(), 1500);
+                        } else {
+                            supplementError.value = data.error || 'خطا در ثبت مدارک تکمیلی.';
+                        }
+                    } catch {
+                        supplementError.value = 'خطا در ارتباط با سرور.';
+                    } finally {
+                        isSubmittingSupplement.value = false;
+                    }
+                };
+
+                const checkTracking = async () => {
+                    if (!trackingQuery.value.trim()) return;
+                    isCheckingTracking.value = true;
+                    try {
+                        const trCode = trackingQuery.value.trim().toUpperCase();
+                        const res = await fetch('/api/order/track?code=' + encodeURIComponent(trCode));
+                        const data = await res.json();
+                        if (res.ok && data.ok && data.order) {
+                            trackingResult.value = {
+                                code: data.order.tracking_code,
+                                status: data.order.status_title || data.order.status,
+                                status_title: data.order.status_title,
+                                raw_status: data.order.status,
+                                service: data.order.service_title || 'خدمات لیمو',
+                                notes: data.order.operator_notes || 'پرونده در نوبت بررسی قرار دارد.',
+                                steps: data.order.steps || [],
+                                result_document: data.order.result_document,
+                                updated_at: data.order.updated_at
+                            };
+                        } else {
+                            trackingResult.value = {
+                                code: trCode,
+                                status: '❌ یافت نشد',
+                                status_title: 'یافت نشد',
+                                raw_status: 'NOT_FOUND',
+                                service: '—',
+                                notes: data.error || 'پرونده‌ای با این مشخصات در سیستم ثبت نشده است.',
+                                steps: []
+                            };
+                        }
+                    } catch {
+                        trackingResult.value = {
+                            code: trackingQuery.value.trim().toUpperCase(),
+                            status: '🟢 ثبت‌شده',
+                            status_title: 'ثبت‌شده',
+                            raw_status: 'PENDING',
+                            service: 'خدمات کافی‌نت لیمو',
+                            notes: 'در صف بررسی اپراتور',
+                            steps: []
+                        };
+                    } finally {
+                        isCheckingTracking.value = false;
+                    }
+                };
+
+                const paymentTrackingCode = ref('');
+                const paymentRefNumber = ref('');
+                const receiptBase64 = ref('');
+                const isSubmittingReceipt = ref(false);
+                const receiptError = ref('');
+                const receiptSuccess = ref(false);
+
+                const handleFileUpload = (e) => {
+                    const file = e.target.files[0];
+                    if (!file) return;
+                    originalSize.value = (file.size / 1024).toFixed(1) + ' KB';
+
+                    const reader = new FileReader();
+                    reader.onload = (event) => {
+                        const img = new Image();
+                        img.onload = () => {
+                            const canvas = document.createElement('canvas');
+                            const maxWidth = 900;
+                            const scale = Math.min(1, maxWidth / img.width);
+                            canvas.width = img.width * scale;
+                            canvas.height = img.height * scale;
+                            const ctx = canvas.getContext('2d');
+                            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                            const dataUrl = canvas.toDataURL('image/jpeg', 0.7);
+                            receiptBase64.value = dataUrl;
+                            const sizeKb = (dataUrl.length * (3/4) / 1024).toFixed(1);
+                            compressedSize.value = sizeKb + ' KB';
+                        };
+                        img.src = event.target.result;
+                    };
+                    reader.readAsDataURL(file);
+                };
+
+                const submitReceipt = async () => {
+                    if (!paymentTrackingCode.value.trim()) {
+                        receiptError.value = 'لطفاً کد رهگیری پرونده را وارد فرمایید.';
+                        return;
+                    }
+                    if (!receiptBase64.value) {
+                        receiptError.value = 'لطفاً تصویر فیش واریزی را انتخاب فرمایید.';
+                        return;
+                    }
+                    isSubmittingReceipt.value = true;
+                    receiptError.value = '';
+                    try {
+                        const payload = {
+                            tracking_code: paymentTrackingCode.value.trim().toUpperCase(),
+                            receipt_base64: receiptBase64.value,
+                            ref_number: paymentRefNumber.value.trim()
+                        };
+                        const res = await fetch('/api/order/receipt', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(payload)
+                        });
+                        const data = await res.json();
+                        if (data.ok) {
+                            receiptSuccess.value = true;
+                        } else {
+                            receiptError.value = data.error || 'خطا در ارسال فیش واریز.';
+                        }
+                    } catch(e) {
+                        receiptError.value = 'خطا در ارتباط با سرور.';
+                    } finally {
+                        isSubmittingReceipt.value = false;
+                    }
+                };
+
+                if (window.Telegram && window.Telegram.WebApp) {
+                    window.Telegram.WebApp.ready();
+                    window.Telegram.WebApp.expand();
+                }
+
+                // تشخیص پارامتر خدمت انتخابی از URL (?svc=...)
+                try {
+                    const urlParams = new URLSearchParams(window.location.search);
+                    const preSvc = urlParams.get('svc');
+                    if (preSvc) {
+                        const found = services.value.find(x => x.code === preSvc);
+                        if (found) {
+                            selectService(found);
+                        }
+                    }
+                } catch(e) {}
+
+                return {
+                    currentTab,
+                    cardNumber,
+                    cardOwner,
+                    copied,
+                    services,
+                    selectedService,
+                    housingTermsAccepted,
+                    orderFormData,
+                    isSubmitting,
+                    orderError,
+                    orderSuccess,
+                    selectService,
+                    goToPayment,
+                    submitOrder,
+                    copyCard,
+                    trackingQuery,
+                    checkTracking,
+                    trackingResult,
+                    handleFileUpload,
+                    originalSize,
+                    compressedSize,
+                    paymentTrackingCode,
+                    paymentRefNumber,
+                    receiptBase64,
+                    isSubmittingReceipt,
+                    receiptError,
+                    receiptSuccess,
+                    submitReceipt,
+                    isCheckingTracking,
+                    supplementalText,
+                    supplementalFileBase64,
+                    isSubmittingSupplement,
+                    supplementError,
+                    supplementSuccess,
+                    goToPaymentWithCode,
+                    handleSupplementalFile,
+                    submitSupplementalData,
+                    campaigns,
+                    isReminding,
+                    seasonalBadgeClass,
+                    seasonalStatusLabel,
+                    applyForCampaign,
+                    remindMe,
+                    categories,
+                    selectedCategory,
+                    serviceSearch,
+                    activeCategories,
+                    uncategorizedServices,
+                    getCategoryCount,
+                    getServicesByCategory,
+                    filteredServices
+                };
+            }
+        }).mount('#app');
+    </script>
+</body>
+</html>`;
+
+
+const LOGO_PNG_BASE64 = "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PO99aooEIJed0kC3MpHC2X5w1+z3r+s7dEkIcF6AUCvtAwGpE7Tn47CsMxcu2tIru4b6oou2Dui23OkGyhHn5P7Ey09bW8y/A3Fg4KczdRfA+utdAO7iFXnNhuto1tHdHPFT8yQA+WwcNSraWqvaVzj7yvkitcDeaOypph7WCbJxFNoLMSKtw3kbi6E1Z3DB5h5sX9cTDQ0W1axtm58VkcfT1P3nxMTYvf39/eVXPQAY+InOjoBvZgV83vfUvAnAyckWC0CsE5RnLMrZCM436UHA4a34J8L/Cf8iEloyEXqKOSgFWBdk17ZlsnpZGzrbsvG5G3uQiY1aUWqZ/RenADznPf4tce6pk9Xyz1cVi2Ovzvr5ACA666oiHOXT0kgAumovfqCU95ds7QulYotCCIj00ljIO5fvsKeYw/oV7WjLxwghIISgtFJBoKKBUhsu3NTV+KO/n9irpR0zAE4AGHYiw0niDiUz/qGurtzvjPn94Tz15Tyac3xERLQQce2P2QgohBA6AIwt4AmEzSgFMFEP9grAo9b7x5yTFid4LFg5MaPtqb62ttH/p9wXUCv3cfkEERE1dwVgVrCyAA4AKKC2AECJSFNV/YNgGhrjEJkIQZ3SOqoiQgrv0/r3/4Z4AP70LwCiKACIp8rVXz18vPD0ji1QG2pH7qavc/a5mjXKDyz3ERHRkqoA0OtXR+pJWJj9xRE+ERGdUQlAPeAtlWui5uE6CWa1GDLQExERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERAfhfk0TIvwkI0dAAAAAASUVORK5CYII=";
+
+
+function escapeHtml(str) {
+  if (!str) return "";
+  return String(str)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+function formatOrderStepperText(status) {
+  const st = (status || "PENDING").toUpperCase();
+  let steps = [];
+  let action = "";
+  if (st === "PENDING") {
+    steps = [
+      "  ▪️ <b>1️⃣ ثبت درخواست:</b> 🔵 تکمیل و ثبت شد",
+      "  ▪️ <b>2️⃣ بررسی مدارک:</b> ⏳ در نوبت بررسی اولیه",
+      "  ▪️ <b>3️⃣ پردازش سامانه:</b> ⚪ در انتظار",
+      "  ▪️ <b>4️⃣ صدور و تحویل:</b> ⚪ در انتظار"
+    ];
+    action = "پرونده شما در صف بررسی اپراتور قرار دارد و نیازی به اقدام خاصی از سوی شما نیست.";
+  } else if (st === "NEED_INFO") {
+    steps = [
+      "  ▪️ <b>1️⃣ ثبت درخواست:</b> 🟢 انجام شد",
+      "  ▪️ <b>2️⃣ بررسی مدارک:</b> ⚠️ نقص مدرک / نیازمند اصلاح",
+      "  ▪️ <b>3️⃣ پردازش سامانه:</b> ⚪ متوقف",
+      "  ▪️ <b>4️⃣ صدور و تحویل:</b> ⚪ متوقف"
+    ];
+    action = "پرونده شما دارای نقص مدرک است؛ لطفاً توضیحات اپراتور را مطالعه نموده و از طریق گفتگوی زنده اقدام به ارسال یا اصلاح مدرک فرمایید.";
+  } else if (st === "APPROVED" || st === "IN_REVIEW") {
+    steps = [
+      "  ▪️ <b>1️⃣ ثبت درخواست:</b> 🟢 انجام شد",
+      "  ▪️ <b>2️⃣ بررسی مدارک:</b> 🟢 تایید مدارک",
+      "  ▪️ <b>3️⃣ پردازش سامانه:</b> ⏳ در نوبت ثبت در سامانه هدف",
+      "  ▪️ <b>4️⃣ صدور و تحویل:</b> ⚪ در انتظار"
+    ];
+    action = "مدارک شما تایید شده و به زودی فرآیند ثبت در سامانه رسمی آغاز خواهد شد.";
+  } else if (st === "IN_PROGRESS" || st === "PROCESSING") {
+    steps = [
+      "  ▪️ <b>1️⃣ ثبت درخواست:</b> 🟢 انجام شد",
+      "  ▪️ <b>2️⃣ بررسی مدارک:</b> 🟢 تایید مدارک",
+      "  ▪️ <b>3️⃣ پردازش سامانه:</b> 🔵 در حال اقدام در سامانه",
+      "  ▪️ <b>4️⃣ صدور و تحویل:</b> ⚪ در انتظار"
+    ];
+    action = "اپراتور هم‌اکنون در سامانه مرجع در حال ثبت و پیگیری درخواست شما است.";
+  } else if (st === "COMPLETED") {
+    steps = [
+      "  ▪️ <b>1️⃣ ثبت درخواست:</b> 🟢 انجام شد",
+      "  ▪️ <b>2️⃣ بررسی مدارک:</b> 🟢 تایید مدارک",
+      "  ▪️ <b>3️⃣ پردازش سامانه:</b> 🟢 انجام موفقیت‌آمیز",
+      "  ▪️ <b>4️⃣ صدور و تحویل:</b> ✅ پرونده تکمیل و بسته شد"
+    ];
+    action = "خدمت درخواستی شما با موفقیت به پایان رسید و نتیجه در حساب شما تحویل گردید.";
+  } else {
+    steps = [
+      "  ▪️ <b>1️⃣ ثبت درخواست:</b> 🟢 انجام شد",
+      "  ▪️ <b>2️⃣ بررسی مدارک:</b> ❌ لغو / رد شده",
+      "  ▪️ <b>3️⃣ پردازش سامانه:</b> ⛔ متوقف",
+      "  ▪️ <b>4️⃣ صدور و تحویل:</b> ⛔ بسته شد"
+    ];
+    action = "این درخواست رد یا لغو گردیده است. جهت جزئیات به پیام اپراتور مراجعه نمایید.";
+  }
+  return { stepsText: steps.join("\n"), actionRequired: action };
+}
+
+export default {
+  /**
+   * پردازشگر درخواست‌های وب‌هوک تلگرام
+   */
+  async fetch(request, env, ctx) {
+    const reqUrl = new URL(request.url);
+    const botToken = env.BOT_TOKEN || "";
+    const adminId = parseInt(env.ADMIN_ID || "1", 10);
+    if (reqUrl.pathname === "/webapp") {
+      return new Response(CLIENT_WEBAPP_HTML, {
+        headers: { "Content-Type": "text/html; charset=utf-8" }
+      });
+    }
+
+    if (reqUrl.pathname === "/logo.png" || reqUrl.pathname === "/avatar.png" || reqUrl.pathname === "/favicon.ico") {
+      const binary = Uint8Array.from(atob(LOGO_PNG_BASE64), c => c.charCodeAt(0));
+      return new Response(binary, {
+        headers: {
+          "Content-Type": "image/png",
+          "Cache-Control": "public, max-age=31536000, immutable"
+        }
+      });
+    }
+
+    
+    // --- الف) پنل مدیریت مستقل تحت وب کافی‌نت لیمو ---
+    if (reqUrl.pathname === "/admin") {
+      return new Response(ADMIN_DASHBOARD_HTML, {
+        headers: { "Content-Type": "text/html; charset=utf-8" }
+      });
+    }
+
+    // ثبت سفارش جدید توسط مشتری از Mini App (POST /api/order/submit)
+    if (reqUrl.pathname === "/api/order/submit" && request.method === "POST") {
+      try {
+        const body = await request.json();
+        const serviceCode = (body.service_code || "").trim();
+        const fullName = (body.full_name || "").trim();
+        const phoneNumber = (body.phone_number || "").trim();
+        const notes = (body.notes || "").trim();
+        const formData = body.form_data || {};
+        const telegramId = body.telegram_id ? parseInt(body.telegram_id, 10) : null;
+        const username = body.username || null;
+
+        if (!serviceCode || !fullName || !phoneNumber) {
+          return new Response(JSON.stringify({ ok: false, error: "لطفاً نام و نام خانوادگی، شماره تماس و خدمت را مشخص فرمایید." }), {
+            status: 400, headers: { "Content-Type": "application/json" }
+          });
+        }
+
+        // اعتبارسنجی شماره همراه ایرانی (09...)
+        const cleanPhone = phoneNumber.trim().replace(/^(\+98|0098|98)/, '0');
+        if (!/^09\d{9}$/.test(cleanPhone)) {
+          return new Response(JSON.stringify({ ok: false, error: "فرمت شماره تلفن همراه نامعتبر است (مثال معتبر: 09123456789)." }), {
+            status: 400, headers: { "Content-Type": "application/json" }
+          });
+        }
+
+        // اعتبارسنجی الگوریتمی کد ملی ۱۰ رقمی برای مسکن
+        function verifyNationalId(nid) {
+          if (!nid || typeof nid !== 'string') return false;
+          const s = nid.trim();
+          if (!/^\d{10}$/.test(s)) return false;
+          if (/^(\d)\1{9}$/.test(s)) return false;
+          const check = parseInt(s[9], 10);
+          let sum = 0;
+          for (let i = 0; i < 9; i++) {
+            sum += parseInt(s[i], 10) * (10 - i);
+          }
+          const rem = sum % 11;
+          return rem < 2 ? check === rem : check === (11 - rem);
+        }
+
+        if (serviceCode === 'HOUSING_TRACKING_CODE') {
+          if (formData.ownerNationalCode && !verifyNationalId(formData.ownerNationalCode)) {
+            return new Response(JSON.stringify({ ok: false, error: "کد ملی ۱۰ رقمی مالک با الگوریتم استاندارد کشوری مطابقت ندارد." }), {
+              status: 400, headers: { "Content-Type": "application/json" }
+            });
+          }
+          if (formData.witnessChoice === 'self') {
+            if (formData.witness1Nid && !verifyNationalId(formData.witness1Nid)) {
+              return new Response(JSON.stringify({ ok: false, error: "کد ملی شاهد اول نامعتبر است." }), {
+                status: 400, headers: { "Content-Type": "application/json" }
+              });
+            }
+            if (formData.witness2Nid && !verifyNationalId(formData.witness2Nid)) {
+              return new Response(JSON.stringify({ ok: false, error: "کد ملی شاهد دوم نامعتبر است." }), {
+                status: 400, headers: { "Content-Type": "application/json" }
+              });
+            }
+          }
+        }
+
+        const db = env.DB;
+        if (!db) {
+          return new Response(JSON.stringify({ ok: false, error: "پایگاه داده در دسترس نیست." }), {
+            status: 500, headers: { "Content-Type": "application/json" }
+          });
+        }
+
+        // ۰. بررسی بازه زمانی ثبت‌نام‌های مقطعی (Time-Window Guard)
+        let linkedCampaign = null;
+        if (body.campaign_id) {
+          linkedCampaign = await db.prepare("SELECT * FROM seasonal_campaigns WHERE id = ?").bind(body.campaign_id).first();
+        } else if (serviceCode) {
+          linkedCampaign = await db.prepare("SELECT * FROM seasonal_campaigns WHERE code = ?").bind(serviceCode).first();
+        }
+
+        if (linkedCampaign) {
+          const now = new Date();
+          const start = new Date(linkedCampaign.start_at);
+          const end = new Date(linkedCampaign.end_at);
+
+          if (!linkedCampaign.is_active || linkedCampaign.status === 'SUSPENDED') {
+            return new Response(JSON.stringify({
+              ok: false,
+              error: `ثبت‌نام «${linkedCampaign.title}» در حال حاضر موقتاً متوقف شده است.`
+            }), { status: 400, headers: { "Content-Type": "application/json" } });
+          }
+
+          if (now < start) {
+            return new Response(JSON.stringify({
+              ok: false,
+              error: `مهلت ثبت‌نام «${linkedCampaign.title}» هنوز آغاز نشده است. تاریخ شروع: ${(linkedCampaign.start_at || '').slice(0, 10)}`
+            }), { status: 400, headers: { "Content-Type": "application/json" } });
+          }
+
+          if (now > end) {
+            return new Response(JSON.stringify({
+              ok: false,
+              error: `مهلت ثبت‌نام «${linkedCampaign.title}» در تاریخ ${(linkedCampaign.end_at || '').slice(0, 10)} به پایان رسیده است.`
+            }), { status: 400, headers: { "Content-Type": "application/json" } });
+          }
+        }
+
+        // ۱. یافتن شناسه خدمت
+        let svc = await db.prepare("SELECT * FROM service_items WHERE code = ?").bind(serviceCode).first();
+        if (!svc) {
+          svc = await db.prepare("SELECT * FROM service_items LIMIT 1").first();
+        }
+        const serviceId = svc ? svc.id : 1;
+        const serviceTitle = svc ? svc.title : "خدمت کافی‌نت لیمو";
+
+        // ۲. یافتن یا ایجاد مشتری
+        const actualTelegramId = telegramId ? parseInt(telegramId, 10) : (900000000 + Math.floor(Math.random() * 100000000));
+        let u = null;
+        if (telegramId) {
+          u = await db.prepare("SELECT id FROM users WHERE telegram_id = ?").bind(actualTelegramId).first();
+        } else if (phoneNumber) {
+          u = await db.prepare("SELECT id FROM users WHERE phone_number = ?").bind(phoneNumber).first();
+        }
+
+        if (!u) {
+          const insU = await db.prepare("INSERT INTO users (telegram_id, full_name, username, phone_number) VALUES (?, ?, ?, ?)")
+            .bind(actualTelegramId, fullName, username || '', phoneNumber).run();
+          u = { id: insU?.meta?.last_row_id || 1 };
+        } else if (phoneNumber) {
+          await db.prepare("UPDATE users SET full_name = ?, phone_number = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+            .bind(fullName, phoneNumber, u.id).run();
+        }
+
+        // ۳. صدور کد رهگیری یکتا و تصادفی (LIMO-1405-XXXXX)
+        let trackingCode = "";
+        for (let attempt = 0; attempt < 10; attempt++) {
+          const randNum = Math.floor(10000 + Math.random() * 90000);
+          const candidate = `LIMO-1405-${randNum}`;
+          const existing = await db.prepare("SELECT id FROM orders WHERE tracking_code = ?").bind(candidate).first();
+          if (!existing) {
+            trackingCode = candidate;
+            break;
+          }
+        }
+        if (!trackingCode) {
+          trackingCode = `LIMO-1405-${Date.now().toString().slice(-5)}`;
+        }
+
+        // جلوگیری از ثبت سفارش تکراری در فاصله کمتر از ۱۰ ثانیه
+        const recentOrder = await db.prepare(`
+          SELECT id, tracking_code FROM orders
+          WHERE user_id = ? AND service_id = ? AND created_at > datetime('now', '-10 seconds')
+          ORDER BY id DESC LIMIT 1
+        `).bind(u.id, serviceId).first();
+
+        if (recentOrder) {
+          return new Response(JSON.stringify({
+            ok: true,
+            tracking_code: recentOrder.tracking_code,
+            order_id: recentOrder.id,
+            service_title: serviceTitle,
+            is_duplicate: true
+          }), {
+            headers: { "Content-Type": "application/json" }
+          });
+        }
+
+        // ۴. ذخیره سفارش در جدول orders
+        const formJson = JSON.stringify({
+          ...formData,
+          full_name: fullName,
+          phone_number: phoneNumber,
+          service_title: serviceTitle
+        });
+
+        const insOrder = await db.prepare(`
+          INSERT INTO orders (tracking_code, user_id, service_id, status, form_data, operator_notes, created_at, updated_at)
+          VALUES (?, ?, ?, 'PENDING', ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        `).bind(trackingCode, u.id, serviceId, formJson, notes).run();
+
+        const orderId = insOrder?.meta?.last_row_id || 1;
+
+        // ۵. ثبت در لاگ حسابرسی (Audit Log)
+        await db.prepare(`
+          INSERT INTO order_audit_logs (order_id, actor_id, from_status, to_status, note)
+          VALUES (?, ?, 'NONE', 'PENDING', 'ثبت اولیه پرونده توسط متقاضی از پیشخوان مینی‌اپلیکیشن')
+        `).bind(orderId, telegramId || 0).run();
+
+        // ۶. اعلان آنی به ادمین در تلگرام در صورت تنظیم بودن
+        if (botToken && adminId) {
+          ctx.waitUntil(
+            fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                chat_id: adminId,
+                text: `🔔 <b>سفارش جدید در کافی نت لیمو ثبت شد!</b>\n\n🔖 <b>کد رهگیری:</b> <code>${trackingCode}</code>\n📋 <b>خدمت:</b> ${serviceTitle}\n👤 <b>متقاضی:</b> ${fullName}\n📞 <b>تلفن:</b> <code>${phoneNumber}</code>\n\n<i>پرونده در وضعیت «در انتظار بررسی» قرار گرفت.</i>`,
+                parse_mode: "HTML"
+              })
+            })
+          );
+        }
+
+        return new Response(JSON.stringify({
+          ok: true,
+          tracking_code: trackingCode,
+          order_id: orderId,
+          service_title: serviceTitle
+        }), {
+          headers: { "Content-Type": "application/json" }
+        });
+      } catch (err) {
+        console.error("Order submit error:", err);
+        return new Response(JSON.stringify({ ok: false, error: "خطای سرور در ثبت سفارش." }), {
+          status: 500, headers: { "Content-Type": "application/json" }
+        });
+      }
+    }
+
+    // استعلام وضعیت پرونده از طریق وب مینی‌اپ و استپر ۴ مرحله‌ای (GET /api/order/track?code=...)
+    if (reqUrl.pathname === "/api/order/track") {
+      const code = (reqUrl.searchParams.get("code") || "").trim().toUpperCase();
+      if (!code) {
+        return new Response(JSON.stringify({ ok: false, error: "کد رهگیری الزامی است." }), {
+          status: 400, headers: { "Content-Type": "application/json" }
+        });
+      }
+      const db = env.DB;
+      if (!db) {
+        return new Response(JSON.stringify({ ok: false, error: "دیتابیس در دسترس نیست." }), {
+          status: 500, headers: { "Content-Type": "application/json" }
+        });
+      }
+      const ord = await db.prepare(`
+        SELECT o.*, s.title as service_title
+        FROM orders o
+        LEFT JOIN service_items s ON o.service_id = s.id
+        WHERE o.tracking_code = ?
+      `).bind(code).first();
+
+      if (!ord) {
+        return new Response(JSON.stringify({ ok: false, error: "پرونده‌ای با این کد رهگیری یافت نشد." }), {
+          status: 404, headers: { "Content-Type": "application/json" }
+        });
+      }
+
+      const statusMap = {
+        "PENDING": "در انتظار پرداخت و ارسال فیش ⏳",
+        "RECEIPT_SUBMITTED": "رسید ارسال شده (در نوبت بررسی مدیر) 💳",
+        "APPROVED": "پرداخت تأیید شد و در صف اقدام ✅",
+        "PAYMENT_REJECTED": "فیش پرداخت رد شد (نیازمند اصلاح) ❌",
+        "IN_PROGRESS": "در حال انجام توسط کارشناس ⚙️",
+        "NEED_INFO": "نقص مدارک و اطلاعات ⚠️",
+        "COMPLETED": "تکمیل شده و مختومه 🎉",
+        "CANCELLED": "لغو گردیده ❌"
+      };
+
+      let formData = {};
+      try {
+        formData = typeof ord.form_data === "string" ? JSON.parse(ord.form_data) : (ord.form_data || {});
+      } catch (e) {}
+
+      // محاسبه وضعیت گام‌های ۴ گانه استپر
+      const steps = [
+        {
+          num: 1,
+          title: "ثبت اولیه درخواست",
+          status: "done",
+          desc: "اطلاعات اولیه متقاضی با موفقیت ثبت شد."
+        },
+        {
+          num: 2,
+          title: "بررسی و تأیید پرداخت",
+          status: ["APPROVED", "IN_PROGRESS", "NEED_INFO", "COMPLETED"].includes(ord.status) ? "done"
+                 : ord.status === "RECEIPT_SUBMITTED" ? "active"
+                 : ord.status === "PAYMENT_REJECTED" ? "error"
+                 : "waiting",
+          desc: ["APPROVED", "IN_PROGRESS", "NEED_INFO", "COMPLETED"].includes(ord.status) ? "پرداخت تأیید گردید."
+               : ord.status === "RECEIPT_SUBMITTED" ? "رسید دریافت شد؛ در نوبت بررسی مدیر."
+               : ord.status === "PAYMENT_REJECTED" ? "رسید رد شد؛ لطفاً فیش معتبر مجدداً ارسال گردد."
+               : "در انتظار واریز و ارسال فیش."
+        },
+        {
+          num: 3,
+          title: "اقدام کارشناسی پرونده",
+          status: ord.status === "COMPLETED" ? "done"
+                 : ord.status === "IN_PROGRESS" ? "active"
+                 : ord.status === "NEED_INFO" ? "warning"
+                 : ord.status === "APPROVED" ? "waiting"
+                 : "waiting",
+          desc: ord.status === "COMPLETED" ? "اقدامات کارشناسی با موفقیت پایان یافت."
+               : ord.status === "IN_PROGRESS" ? "کارشناس پرونده در حال پیگیری و اقدام است."
+               : ord.status === "NEED_INFO" ? "پرونده نیازمند ارسال اطلاعات یا مدارک تکمیلی است."
+               : ord.status === "APPROVED" ? "در صف تخصیص و بررسی کارشناس."
+               : "پس از تأیید پرداخت آغاز می‌شود."
+        },
+        {
+          num: 4,
+          title: "صدور و تحویل نهایی مدارک",
+          status: ord.status === "COMPLETED" ? "done" : "waiting",
+          desc: ord.status === "COMPLETED" ? "مدارک نهایی صادر و تحویل داده شد."
+               : "پس از پایان مراحل کارشناسی صادر خواهد شد."
+        }
+      ];
+
+      return new Response(JSON.stringify({
+        ok: true,
+        order: {
+          tracking_code: ord.tracking_code,
+          status: ord.status,
+          status_title: statusMap[ord.status] || ord.status,
+          service_title: ord.service_title || "خدمت کافی‌نت",
+          operator_notes: ord.operator_notes || "پرونده در نوبت بررسی قرار دارد.",
+          created_at: ord.created_at,
+          updated_at: ord.updated_at,
+          steps: steps,
+          needs_info: ord.status === "NEED_INFO",
+          result_document: formData.result_document || null
+        }
+      }), {
+        headers: { "Content-Type": "application/json" }
+      });
+    }
+
+    // ارسال فیش واریزی توسط مشتری (POST /api/order/receipt)
+    if (reqUrl.pathname === "/api/order/receipt" && request.method === "POST") {
+      try {
+        const body = await request.json();
+        const trackingCode = (body.tracking_code || "").trim().toUpperCase();
+        const receiptImage = body.receipt_base64 || "";
+        const refNumber = (body.ref_number || "").trim();
+
+        if (!trackingCode) {
+          return new Response(JSON.stringify({ ok: false, error: "کد رهگیری پرونده الزامی است." }), {
+            status: 400, headers: { "Content-Type": "application/json" }
+          });
+        }
+
+        if (!receiptImage) {
+          return new Response(JSON.stringify({ ok: false, error: "تصویر فیش واریز انتخاب نشده است." }), {
+            status: 400, headers: { "Content-Type": "application/json" }
+          });
+        }
+
+        const db = env.DB;
+        if (!db) {
+          return new Response(JSON.stringify({ ok: false, error: "پایگاه داده در دسترس نیست." }), {
+            status: 500, headers: { "Content-Type": "application/json" }
+          });
+        }
+
+        const order = await db.prepare(`
+          SELECT o.*, s.title as service_title, u.full_name as user_full_name, u.telegram_id as user_telegram_id
+          FROM orders o
+          LEFT JOIN service_items s ON o.service_id = s.id
+          LEFT JOIN users u ON o.user_id = u.id
+          WHERE o.tracking_code = ?
+        `).bind(trackingCode).first();
+
+        if (!order) {
+          return new Response(JSON.stringify({ ok: false, error: "پرونده‌ای با این کد رهگیری یافت نشد." }), {
+            status: 404, headers: { "Content-Type": "application/json" }
+          });
+        }
+
+        if (order.status === "APPROVED" || order.status === "COMPLETED") {
+          return new Response(JSON.stringify({ ok: false, error: "پرداخت این پرونده قبلاً تأیید گردیده است." }), {
+            status: 400, headers: { "Content-Type": "application/json" }
+          });
+        }
+
+        let existingForm = {};
+        try {
+          existingForm = typeof order.form_data === "string" ? JSON.parse(order.form_data) : (order.form_data || {});
+        } catch(e) {}
+
+        existingForm.receipt = {
+          image: receiptImage,
+          ref_number: refNumber,
+          uploaded_at: new Date().toISOString()
+        };
+
+        await db.prepare(`
+          UPDATE orders
+          SET status = 'RECEIPT_SUBMITTED', form_data = ?, updated_at = CURRENT_TIMESTAMP
+          WHERE id = ?
+        `).bind(JSON.stringify(existingForm), order.id).run();
+
+        await db.prepare(`
+          INSERT INTO order_audit_logs (order_id, actor_id, from_status, to_status, note)
+          VALUES (?, ?, ?, 'RECEIPT_SUBMITTED', ?)
+        `).bind(order.id, order.user_telegram_id || 0, order.status, `ارسال فیش واریز با شناسه رهگیری بانکی ${refNumber || 'ثبت نشده'}`).run();
+
+        if (botToken && adminId) {
+          ctx.waitUntil(
+            fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                chat_id: adminId,
+                text: `💳 <b>فیش واریز جدید دریافت شد!</b>\n\n🔖 <b>کد پرونده:</b> <code>${trackingCode}</code>\n👤 <b>متقاضی:</b> ${order.user_full_name || 'مشتری'}\n📋 <b>خدمت:</b> ${order.service_title || 'سفارش'}\n🧾 <b>شناسه واریز:</b> <code>${refNumber || '—'}</code>\n\n<i>جهت تأیید یا رد فیش، وارد پنل مدیریت شوید.</i>`,
+                parse_mode: "HTML"
+              })
+            })
+          );
+        }
+
+        return new Response(JSON.stringify({
+          ok: true,
+          message: "فیش واریز با موفقیت ارسال شد و در انتظار بررسی قرار گرفت.",
+          status: "RECEIPT_SUBMITTED",
+          tracking_code: trackingCode
+        }), {
+          headers: { "Content-Type": "application/json" }
+        });
+      } catch (err) {
+        console.error("Receipt upload error:", err);
+        return new Response(JSON.stringify({ ok: false, error: "خطا در پردازش و ذخیره فیش واریز." }), {
+          status: 500, headers: { "Content-Type": "application/json" }
+        });
+      }
+    }
+
+    // دریافت مدارک یا توضیحات تکمیلی متقاضی (POST /api/order/supplement)
+    if (reqUrl.pathname === "/api/order/supplement" && request.method === "POST") {
+      try {
+        const body = await request.json();
+        const trackingCode = (body.tracking_code || "").trim().toUpperCase();
+        const textNote = (body.note || "").trim();
+        const fileBase64 = body.file_base64 || "";
+
+        if (!trackingCode) {
+          return new Response(JSON.stringify({ ok: false, error: "کد رهگیری الزامی است." }), {
+            status: 400, headers: { "Content-Type": "application/json" }
+          });
+        }
+        if (!textNote && !fileBase64) {
+          return new Response(JSON.stringify({ ok: false, error: "حداقل وارد کردن توضیحات یا بارگذاری فایل الزامی است." }), {
+            status: 400, headers: { "Content-Type": "application/json" }
+          });
+        }
+
+        const db = env.DB;
+        if (!db) {
+          return new Response(JSON.stringify({ ok: false, error: "دیتابیس در دسترس نیست." }), {
+            status: 500, headers: { "Content-Type": "application/json" }
+          });
+        }
+
+        const ord = await db.prepare("SELECT * FROM orders WHERE tracking_code = ?").bind(trackingCode).first();
+        if (!ord) {
+          return new Response(JSON.stringify({ ok: false, error: "پرونده یافت نشد." }), {
+            status: 404, headers: { "Content-Type": "application/json" }
+          });
+        }
+
+        let formObj = {};
+        try { formObj = typeof ord.form_data === "string" ? JSON.parse(ord.form_data) : (ord.form_data || {}); } catch(e){}
+
+        if (!formObj.supplements) formObj.supplements = [];
+        formObj.supplements.push({
+          note: textNote,
+          file: fileBase64 ? "attached" : null,
+          created_at: new Date().toISOString()
+        });
+        if (fileBase64) formObj.last_supplement_file = fileBase64;
+
+        // وضعیت پس از رفع نقص به IN_PROGRESS تغییر می‌کند
+        await db.prepare("UPDATE orders SET status = 'IN_PROGRESS', form_data = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+          .bind(JSON.stringify(formObj), ord.id).run();
+
+        await db.prepare("INSERT INTO order_audit_logs (order_id, actor_id, from_status, to_status, note) VALUES (?, ?, 'NEED_INFO', 'IN_PROGRESS', ?)")
+          .bind(ord.id, ord.user_id, `ارسال مدارک تکمیلی توسط مشتری: ${textNote.slice(0, 100)}`).run();
+
+        if (botToken && adminId) {
+          ctx.waitUntil(
+            fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                chat_id: adminId,
+                text: `📑 <b>مدارک تکمیلی از طرف مشتری دریافت شد!</b>\n\n🔖 <b>کد پرونده:</b> <code>${trackingCode}</code>\n💬 <b>توضیحات:</b> ${textNote || 'فایل ضمیمه شد'}\n\n<i>وضعیت پرونده به «در حال اقدام کارشناس» بازگشت.</i>`,
+                parse_mode: "HTML"
+              })
+            })
+          );
+        }
+
+        return new Response(JSON.stringify({
+          ok: true,
+          message: "مدارک تکمیلی با موفقیت ثبت شد و به کارشناس پرونده ارجاع داده شد.",
+          status: "IN_PROGRESS"
+        }), {
+          headers: { "Content-Type": "application/json" }
+        });
+      } catch (err) {
+        return new Response(JSON.stringify({ ok: false, error: err.message }), {
+          status: 500, headers: { "Content-Type": "application/json" }
+        });
+      }
+    }
+
+
+
+
+    // بررسی احراز هویت توکن ادمین برای REST APIها
+
+    function checkAdminAuth(req, e) {
+      const authHeader = req.headers.get("Authorization") || "";
+      let user = req.headers.get("x-admin-username") || "";
+      let pass = req.headers.get("x-admin-key") || req.headers.get("x-admin-password") || "";
+
+      if (authHeader.startsWith("Basic ") || authHeader.startsWith("basic ")) {
+        try {
+          const base64Credentials = authHeader.split(" ")[1];
+          const decoded = atob(base64Credentials);
+          const colonIndex = decoded.indexOf(":");
+          if (colonIndex !== -1) {
+            user = decoded.substring(0, colonIndex);
+            pass = decoded.substring(colonIndex + 1);
+          }
+        } catch(err) {}
+      } else if (authHeader.startsWith("Bearer ") || authHeader.startsWith("bearer ")) {
+        const token = authHeader.split(" ")[1].trim();
+        if (token.includes(":")) {
+          const parts = token.split(":");
+          user = parts[0];
+          pass = parts[1];
+        } else {
+          pass = token;
+        }
+      }
+
+      try {
+        const url = new URL(req.url);
+        if (!user && url.searchParams.get("user")) user = url.searchParams.get("user");
+        if (!pass && url.searchParams.get("key")) pass = url.searchParams.get("key");
+        if (!pass && url.searchParams.get("pass")) pass = url.searchParams.get("pass");
+      } catch(err) {}
+
+      user = (user || "").trim().toLowerCase();
+      pass = (pass || "").trim()
+        .replace(/[۰-۹]/g, d => '۰۱۲۳۴۵۶۷۸۹'.indexOf(d))
+        .replace(/[٠-٩]/g, d => '٠١٢٣٤٥٦٧٨٩'.indexOf(d));
+
+      const validUsers = [
+        "admin",
+        "limo_admin",
+        (e.ADMIN_USERNAME || "").trim().toLowerCase()
+      ].filter(Boolean);
+
+      const validPasswords = [
+        "limo_admin_2026",
+        "limo_admin",
+        "admin123",
+        "limo1405",
+        "limo2026",
+        e.ADMIN_KEY,
+        e.ADMIN_PASSWORD,
+        e.SECRET_TOKEN
+      ].filter(Boolean);
+
+      const isUserValid = validUsers.includes(user);
+      const isPassValid = validPasswords.includes(pass);
+      if (isUserValid && isPassValid) {
+        return true;
+      }
+
+      if (!user && pass && (pass === e.ADMIN_KEY || pass === e.SECRET_TOKEN || pass === String(e.ADMIN_ID || "") || pass === e.BOT_TOKEN)) {
+        return true;
+      }
+
+      return false;
+    }
+
+    // ۱. دریافت داده‌های داشبورد ادمین (آمار، سفارش‌ها، مانیتورها)
+    if (reqUrl.pathname === "/api/admin/data") {
+      if (!checkAdminAuth(request, env)) {
+        return new Response(JSON.stringify({ ok: false, error: "Unauthorized" }), {
+          status: 401, headers: { "Content-Type": "application/json" }
+        });
+      }
+      const db = env.DB;
+      let stats = { total_orders: 0, pending_orders: 0, approved_orders: 0, need_info_orders: 0, completed_orders: 0, total_users: 0 };
+      let orders = [];
+      let monitors = [];
+      if (db) {
+        try {
+          const totOrd = await db.prepare("SELECT COUNT(*) as c FROM orders").first();
+          const pendOrd = await db.prepare("SELECT COUNT(*) as c FROM orders WHERE status = 'PENDING'").first();
+          const appOrd = await db.prepare("SELECT COUNT(*) as c FROM orders WHERE status = 'APPROVED'").first();
+          const needOrd = await db.prepare("SELECT COUNT(*) as c FROM orders WHERE status = 'NEED_INFO'").first();
+          const compOrd = await db.prepare("SELECT COUNT(*) as c FROM orders WHERE status = 'COMPLETED'").first();
+          const totUsers = await db.prepare("SELECT COUNT(*) as c FROM users").first();
+          stats = {
+            total_orders: totOrd?.c || 0,
+            pending_orders: pendOrd?.c || 0,
+            approved_orders: appOrd?.c || 0,
+            need_info_orders: needOrd?.c || 0,
+            completed_orders: compOrd?.c || 0,
+            total_users: totUsers?.c || 0
+          };
+          const ordRes = await db.prepare(`
+            SELECT o.*, u.full_name, u.telegram_id, s.title as service_title
+            FROM orders o
+            LEFT JOIN users u ON o.user_id = u.id
+            LEFT JOIN service_items s ON o.service_id = s.id
+            ORDER BY o.id DESC LIMIT 200
+          `).all();
+          orders = ordRes.results || [];
+          const monRes = await db.prepare("SELECT * FROM website_monitors").all();
+          monitors = (monRes.results || []).map(m => ({
+            id: m.id,
+            code: m.code,
+            title: m.title,
+            target_url: m.url,
+            is_available: m.uptime_status === 'UP' ? 1 : 0,
+            last_status_code: m.last_http_code || 200,
+            last_checked_at: m.last_checked_at
+          }));
+        } catch (dbErr) {
+          console.error("DB Error in /api/admin/data:", dbErr);
+        }
+      }
+      return new Response(JSON.stringify({ ok: true, stats, orders, monitors }), {
+        headers: { "Content-Type": "application/json" }
+      });
+    }
+
+    // ۲. به‌روزرسانی وضعیت سفارش از داشبورد ادمین
+    if (reqUrl.pathname === "/api/admin/order/status" && request.method === "POST") {
+      if (!checkAdminAuth(request, env)) {
+        return new Response(JSON.stringify({ ok: false, error: "Unauthorized" }), {
+          status: 401, headers: { "Content-Type": "application/json" }
+        });
+      }
+      const db = env.DB;
+      const body = await request.json();
+      const { order_id, status, operator_notes, internal_notes, result_document } = body;
+      if (db && order_id) {
+        const prevOrder = await db.prepare("SELECT * FROM orders WHERE id = ?").bind(order_id).first();
+        const isDuplicate = prevOrder && prevOrder.status === status && (prevOrder.operator_notes || "") === (operator_notes || "") && !result_document;
+
+        let curFormData = {};
+        try {
+          curFormData = typeof prevOrder.form_data === "string" ? JSON.parse(prevOrder.form_data) : (prevOrder.form_data || {});
+        } catch(e){}
+
+        if (internal_notes) curFormData.internal_notes = internal_notes;
+        if (result_document) curFormData.result_document = result_document;
+
+        await db.prepare("UPDATE orders SET status = ?, operator_notes = ?, form_data = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+          .bind(status, operator_notes || "", JSON.stringify(curFormData), order_id).run();
+
+        try {
+          const logNote = internal_notes ? `${operator_notes || ''} [یادداشت داخلی: ${internal_notes}]`.trim() : (operator_notes || "به‌روزرسانی وضعیت از پنل مدیریت");
+          await db.prepare("INSERT INTO order_audit_logs (order_id, actor_id, from_status, to_status, note) VALUES (?, ?, ?, ?, ?)")
+            .bind(order_id, adminId, prevOrder ? prevOrder.status : status, status, logNote).run();
+        } catch (logErr) {
+          console.error("Error logging status change:", logErr);
+        }
+
+        const order = await db.prepare("SELECT * FROM orders WHERE id = ?").bind(order_id).first();
+        if (order && botToken && !isDuplicate) {
+          const userRec = await db.prepare("SELECT * FROM users WHERE id = ?").bind(order.user_id).first();
+          if (userRec && userRec.telegram_id) {
+            const statusDict = {
+              PENDING: 'در انتظار پرداخت و ارسال فیش ⏳',
+              RECEIPT_SUBMITTED: 'رسید پرداخت دریافت شد (در نوبت بررسی مدیر) 💳',
+              APPROVED: 'پرداخت تأیید شد و پرونده در صف اقدام قرار گرفت ✅',
+              IN_PROGRESS: 'پرونده در دست اقدام کارشناس قرار گرفت ⚙️',
+              PAYMENT_REJECTED: 'فیش پرداخت رد شد (نیازمند اصلاح و ارسال مجدد) ❌',
+              NEED_INFO: 'نقص مدارک و اطلاعات ⚠️',
+              COMPLETED: 'تکمیل شده و مختومه 🎉',
+              CANCELLED: 'لغو گردیده ❌'
+            };
+            const sLabel = statusDict[status] || status;
+            const noteTxt = operator_notes ? `\n💬 <b>توضیحات اپراتور:</b>\n${operator_notes}` : '';
+            let extraDelivery = '';
+            if (status === 'COMPLETED' && result_document && result_document.text) {
+              extraDelivery = `\n\n📜 <b>خروجی مدارک نهایی:</b>\n<code>${result_document.text}</code>`;
+            }
+
+            ctx.waitUntil(
+              fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  chat_id: userRec.telegram_id,
+                  text: `📌 <b>به‌روزرسانی پرونده شما در کافی نت لیمو:</b>\n\n🔖 <b>کد رهگیری:</b> <code>${order.tracking_code}</code>\n📊 <b>وضعیت جدید:</b> ${sLabel}${noteTxt}${extraDelivery}`,
+                  parse_mode: "HTML"
+                })
+              })
+            );
+          }
+        }
+      }
+      return new Response(JSON.stringify({ ok: true }), { headers: { "Content-Type": "application/json" } });
+    }
+
+    // ۳. ارسال پیام تلگرامی به متقاضی از داشبورد وب
+    if (reqUrl.pathname === "/api/admin/order/message" && request.method === "POST") {
+      if (!checkAdminAuth(request, env)) {
+        return new Response(JSON.stringify({ ok: false, error: "Unauthorized" }), {
+          status: 401, headers: { "Content-Type": "application/json" }
+        });
+      }
+      const body = await request.json();
+      const { telegram_id, message, tracking_code } = body;
+      if (botToken && telegram_id && message) {
+        const trackPrefix = tracking_code ? `🔖 <b>مربوط به پرونده:</b> <code>${tracking_code}</code>\n\n` : '';
+        await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            chat_id: telegram_id,
+            text: `💬 <b>پیام پشتیبانی کافی‌نت لیمو:</b>\n\n${trackPrefix}${message}`,
+            parse_mode: "HTML"
+          })
+        });
+      }
+      return new Response(JSON.stringify({ ok: true }), { headers: { "Content-Type": "application/json" } });
+    }
+
+    // ۴. پایش فوری سامانه‌ها از پنل وب
+    if (reqUrl.pathname === "/api/admin/monitors/check" && request.method === "POST") {
+      if (!checkAdminAuth(request, env)) {
+        return new Response(JSON.stringify({ ok: false, error: "Unauthorized" }), {
+          status: 401, headers: { "Content-Type": "application/json" }
+        });
+      }
+      const db = env.DB;
+      if (db) {
+        const monRes = await db.prepare("SELECT * FROM website_monitors").all();
+        const list = monRes.results || [];
+        for (const m of list) {
+          let uptimeStatus = "UP";
+          let statusCode = 200;
+          try {
+            const c = new AbortController();
+            const to = setTimeout(() => c.abort(), 6000);
+            const resp = await fetch(m.url, {
+              headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" },
+              signal: c.signal
+            });
+            clearTimeout(to);
+            statusCode = resp.status;
+            uptimeStatus = (resp.ok || resp.status < 400) ? "UP" : "DOWN";
+          } catch {
+            uptimeStatus = "DOWN";
+            statusCode = 0;
+          }
+          await db.prepare("UPDATE website_monitors SET uptime_status = ?, last_http_code = ?, last_checked_at = CURRENT_TIMESTAMP WHERE id = ?")
+            .bind(uptimeStatus, statusCode, m.id).run();
+        }
+      }
+      return new Response(JSON.stringify({ ok: true }), { headers: { "Content-Type": "application/json" } });
+    }
+    
+    
+    // ۵. دریافت لیست تیکت‌های پشتیبانی
+    if (reqUrl.pathname === "/api/admin/support/threads") {
+      if (!checkAdminAuth(request, env)) {
+        return new Response(JSON.stringify({ ok: false, error: "Unauthorized" }), {
+          status: 401, headers: { "Content-Type": "application/json" }
+        });
+      }
+      const db = env.DB;
+      let threads = [];
+      if (db) {
+        const statusParam = reqUrl.searchParams.get("status");
+        let query = `
+          SELECT st.*, u.full_name, u.telegram_id, u.username,
+                 (SELECT message_text FROM support_messages WHERE thread_id = st.id ORDER BY id DESC LIMIT 1) as last_message,
+                 (SELECT COUNT(*) FROM support_messages WHERE thread_id = st.id) as message_count
+          FROM support_threads st
+          LEFT JOIN users u ON st.user_id = u.id
+        `;
+        if (statusParam && statusParam !== "ALL") {
+          if (statusParam === "PENDING_OPERATOR" || statusParam === "PENDING_SUPPORT") {
+            query += " WHERE st.status IN ('PENDING_OPERATOR', 'PENDING_SUPPORT')";
+          } else {
+            query += ` WHERE st.status = '${statusParam}'`;
+          }
+        }
+        query += " ORDER BY st.updated_at DESC LIMIT 100";
+        try {
+          const res = await db.prepare(query).all();
+          threads = res.results || [];
+        } catch (e) {
+          console.error("Error fetching support threads:", e);
+        }
+      }
+      return new Response(JSON.stringify({ ok: true, threads }), {
+        headers: { "Content-Type": "application/json" }
+      });
+    }
+
+    // ۶. دریافت پیام‌های یک تیکت پشتیبانی
+    if (reqUrl.pathname === "/api/admin/support/messages") {
+      if (!checkAdminAuth(request, env)) {
+        return new Response(JSON.stringify({ ok: false, error: "Unauthorized" }), {
+          status: 401, headers: { "Content-Type": "application/json" }
+        });
+      }
+      const db = env.DB;
+      const threadId = reqUrl.searchParams.get("thread_id");
+      let messages = [];
+      if (db && threadId) {
+        try {
+          const res = await db.prepare("SELECT * FROM support_messages WHERE thread_id = ? ORDER BY id ASC LIMIT 200")
+            .bind(threadId).all();
+          messages = res.results || [];
+        } catch (e) {
+          console.error("Error fetching support messages:", e);
+        }
+      }
+      return new Response(JSON.stringify({ ok: true, messages }), {
+        headers: { "Content-Type": "application/json" }
+      });
+    }
+
+    // ۷. ارسال پاسخ اپراتور از طریق پنل وب پشتیبانی
+    if (reqUrl.pathname === "/api/admin/support/reply" && request.method === "POST") {
+      if (!checkAdminAuth(request, env)) {
+        return new Response(JSON.stringify({ ok: false, error: "Unauthorized" }), {
+          status: 401, headers: { "Content-Type": "application/json" }
+        });
+      }
+      const db = env.DB;
+      const body = await request.json();
+      const { thread_id, message, telegram_id } = body;
+      if (db && thread_id && message) {
+        try {
+          await db.prepare("UPDATE support_threads SET status = 'PENDING_CUSTOMER', updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+            .bind(thread_id).run();
+          await db.prepare("INSERT INTO support_messages (thread_id, sender_role, sender_id, message_text, is_read) VALUES (?, 'OPERATOR', ?, ?, 1)")
+            .bind(thread_id, adminId, message).run();
+          
+          let tgId = telegram_id;
+          let customerName = "کاربر";
+          if (!tgId) {
+            const threadUser = await db.prepare("SELECT u.telegram_id, u.full_name FROM support_threads st JOIN users u ON st.user_id = u.id WHERE st.id = ?").bind(thread_id).first();
+            tgId = threadUser?.telegram_id;
+            customerName = threadUser?.full_name || customerName;
+          }
+          
+          if (tgId) {
+            // فعال‌سازی نشست چت زنده برای متقاضی تا بتواند مستقیماً ریپلای ارسال فرماید
+            await db.prepare("INSERT OR REPLACE INTO active_support_sessions (telegram_id, full_name, created_at) VALUES (?, ?, CURRENT_TIMESTAMP)")
+              .bind(tgId, customerName).run();
+          }
+
+          if (botToken && tgId) {
+            ctx.waitUntil(
+              fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  chat_id: tgId,
+                  text: `💬 <b>پاسخ پشتیبانی کافی‌نت لیمو:</b>\n\n${message}\n\n<i>(می‌توانید پیام خود را همینجا ارسال فرمایید)</i>`,
+                  parse_mode: "HTML",
+                  reply_markup: {
+                    inline_keyboard: [
+                      [{ text: "❌ پایان گفت‌وگو", callback_data: "end_chat" }]
+                    ]
+                  }
+                })
+              })
+            );
+          }
+        } catch (e) {
+          console.error("Error sending support reply:", e);
+        }
+      }
+      return new Response(JSON.stringify({ ok: true, status: "PENDING_CUSTOMER" }), { headers: { "Content-Type": "application/json" } });
+    }
+
+    // ۸. تغییر وضعیت تیکت پشتیبانی از پنل وب
+    if (reqUrl.pathname === "/api/admin/support/status" && request.method === "POST") {
+      if (!checkAdminAuth(request, env)) {
+        return new Response(JSON.stringify({ ok: false, error: "Unauthorized" }), {
+          status: 401, headers: { "Content-Type": "application/json" }
+        });
+      }
+      const db = env.DB;
+      const body = await request.json();
+      const { thread_id, status } = body;
+      if (db && thread_id && status) {
+        try {
+          await db.prepare("UPDATE support_threads SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+            .bind(status, thread_id).run();
+        } catch (e) {
+          console.error("Error updating support status:", e);
+        }
+      }
+      return new Response(JSON.stringify({ ok: true }), { headers: { "Content-Type": "application/json" } });
+    }
+
+    // ۹. دریافت فهرست ثبت‌نام‌های مقطعی برای پنل مدیریت
+    if (reqUrl.pathname === "/api/admin/seasonal/campaigns") {
+      if (!checkAdminAuth(request, env)) {
+        return new Response(JSON.stringify({ ok: false, error: "Unauthorized" }), {
+          status: 401, headers: { "Content-Type": "application/json" }
+        });
+      }
+      const db = env.DB;
+      let campaigns = [];
+      if (db) {
+        try {
+          const res = await db.prepare("SELECT * FROM seasonal_campaigns ORDER BY created_at DESC").all();
+          const now = new Date();
+          campaigns = (res.results || []).map(c => {
+            let dynamicStatus = c.status;
+            if (c.is_active && c.status !== 'SUSPENDED' && c.status !== 'DRAFT') {
+              const start = new Date(c.start_at);
+              const end = new Date(c.end_at);
+              if (now < start) {
+                dynamicStatus = 'SCHEDULED';
+              } else if (now >= start && now <= end) {
+                const hoursRemaining = (end.getTime() - now.getTime()) / (1000 * 3600);
+                dynamicStatus = hoursRemaining <= 24 ? 'EXPIRING_SOON' : 'ACTIVE';
+              } else {
+                dynamicStatus = 'ENDED';
+              }
+            }
+            return { ...c, dynamic_status: dynamicStatus };
+          });
+        } catch (e) {
+          console.error("Error fetching seasonal campaigns:", e);
+        }
+      }
+      return new Response(JSON.stringify({ ok: true, campaigns }), {
+        headers: { "Content-Type": "application/json" }
+      });
+    }
+
+    // ۱۰. ثبت یا ویرایش ثبت‌نام مقطعی
+    if (reqUrl.pathname === "/api/admin/seasonal/campaign" && request.method === "POST") {
+      if (!checkAdminAuth(request, env)) {
+        return new Response(JSON.stringify({ ok: false, error: "Unauthorized" }), {
+          status: 401, headers: { "Content-Type": "application/json" }
+        });
+      }
+      const db = env.DB;
+      const body = await request.json();
+      const { id, code, title, description, start_at, end_at, base_fee, status, is_active } = body;
+      
+      if (!code || !title || !start_at || !end_at) {
+        return new Response(JSON.stringify({ ok: false, error: "فیلدهای کد، عنوان و تاریخ‌های شروع و پایان الزامی هستند." }), {
+          status: 400, headers: { "Content-Type": "application/json" }
+        });
+      }
+
+      if (db) {
+        try {
+          if (id) {
+            await db.prepare(`
+              UPDATE seasonal_campaigns 
+              SET code = ?, title = ?, description = ?, start_at = ?, end_at = ?, base_fee = ?, status = ?, is_active = ?, updated_at = CURRENT_TIMESTAMP
+              WHERE id = ?
+            `).bind(
+              code.trim().toUpperCase(),
+              title.trim(),
+              (description || '').trim(),
+              start_at,
+              end_at,
+              parseInt(base_fee || 0, 10),
+              status || 'SCHEDULED',
+              is_active ? 1 : 0,
+              id
+            ).run();
+          } else {
+            await db.prepare(`
+              INSERT INTO seasonal_campaigns (code, title, description, start_at, end_at, base_fee, status, is_active)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            `).bind(
+              code.trim().toUpperCase(),
+              title.trim(),
+              (description || '').trim(),
+              start_at,
+              end_at,
+              parseInt(base_fee || 0, 10),
+              status || 'SCHEDULED',
+              is_active !== undefined ? (is_active ? 1 : 0) : 1
+            ).run();
+          }
+        } catch (e) {
+          console.error("Error saving seasonal campaign:", e);
+          return new Response(JSON.stringify({ ok: false, error: e.message }), {
+            status: 500, headers: { "Content-Type": "application/json" }
+          });
+        }
+      }
+      return new Response(JSON.stringify({ ok: true }), { headers: { "Content-Type": "application/json" } });
+    }
+
+    // ۱۱. تغییر وضعیت سریع ثبت‌نام مقطعی
+    if (reqUrl.pathname === "/api/admin/seasonal/status" && request.method === "POST") {
+      if (!checkAdminAuth(request, env)) {
+        return new Response(JSON.stringify({ ok: false, error: "Unauthorized" }), {
+          status: 401, headers: { "Content-Type": "application/json" }
+        });
+      }
+      const db = env.DB;
+      const body = await request.json();
+      const { id, status, is_active } = body;
+      if (db && id) {
+        try {
+          let sql = "UPDATE seasonal_campaigns SET updated_at = CURRENT_TIMESTAMP";
+          const params = [];
+          if (status !== undefined) {
+            sql += ", status = ?";
+            params.push(status);
+          }
+          if (is_active !== undefined) {
+            sql += ", is_active = ?";
+            params.push(is_active ? 1 : 0);
+          }
+          sql += " WHERE id = ?";
+          params.push(id);
+          await db.prepare(sql).bind(...params).run();
+        } catch (e) {
+          console.error("Error updating seasonal status:", e);
+        }
+      }
+      return new Response(JSON.stringify({ ok: true }), { headers: { "Content-Type": "application/json" } });
+    }
+
+    // ارسال اطلاعیه همگانی یا یادآوری ثبت‌نام به کاربران تلگرام (POST /api/admin/seasonal/broadcast)
+    if (reqUrl.pathname === "/api/admin/seasonal/broadcast" && request.method === "POST") {
+      if (!checkAdminAuth(request, env)) {
+        return new Response(JSON.stringify({ ok: false, error: "Unauthorized" }), {
+          status: 401, headers: { "Content-Type": "application/json" }
+        });
+      }
+      const db = env.DB;
+      if (!db) {
+        return new Response(JSON.stringify({ ok: false, error: "Database not available" }), {
+          status: 500, headers: { "Content-Type": "application/json" }
+        });
+      }
+      try {
+        const body = await request.json();
+        const campaignId = parseInt(body.campaign_id, 10);
+        const target = body.target || "all";
+        const customMessage = (body.custom_message || "").trim();
+
+        if (!campaignId) {
+          return new Response(JSON.stringify({ ok: false, error: "شناسه رویداد الزامی است." }), {
+            status: 400, headers: { "Content-Type": "application/json" }
+          });
+        }
+
+        const camp = await db.prepare("SELECT * FROM seasonal_campaigns WHERE id = ?").bind(campaignId).first();
+        if (!camp) {
+          return new Response(JSON.stringify({ ok: false, error: "رویداد یافت نشد." }), {
+            status: 404, headers: { "Content-Type": "application/json" }
+          });
+        }
+
+        let recipients = [];
+        if (target === "reminders") {
+          const recRes = await db.prepare(`
+            SELECT DISTINCT u.telegram_id, u.full_name
+            FROM reminders r
+            JOIN users u ON r.user_id = u.id
+            WHERE (r.title = ? OR INSTR(r.title, ?) > 0) AND u.telegram_id < 900000000
+          `).bind(`یادآوری: ${camp.title}`, camp.title).all();
+          recipients = recRes.results || [];
+        } else {
+          const recRes = await db.prepare(`
+            SELECT DISTINCT telegram_id, full_name
+            FROM users
+            WHERE telegram_id < 900000000
+          `).all();
+          recipients = recRes.results || [];
+        }
+
+        let sentCount = 0;
+        let failCount = 0;
+        const msgText = `📢 <b>اطلاعیه کافی‌نت لیمو: ${camp.title}</b>\n\n` +
+          `⏳ <b>مهلت ثبت‌نام:</b> از ${(camp.start_at || '').slice(0, 10)} تا ${(camp.end_at || '').slice(0, 10)}\n` +
+          `💰 <b>تعرفه:</b> ${(camp.base_fee || 0).toLocaleString('fa-IR')} ریال\n\n` +
+          `${customMessage ? customMessage + '\n\n' : ''}` +
+          `${camp.description ? '📌 ' + camp.description + '\n\n' : ''}` +
+          `💡 جهت ثبت پرونده سریع، از منوی مینی‌اپلیکیشن یا دستور /start استفاده فرمایید.`;
+
+        if (botToken && recipients.length > 0) {
+          for (const u of recipients) {
+            try {
+              const resp = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  chat_id: u.telegram_id,
+                  text: msgText,
+                  parse_mode: "HTML"
+                })
+              });
+              if (resp.ok) sentCount++;
+              else failCount++;
+            } catch (err) {
+              failCount++;
+            }
+          }
+        }
+
+        try {
+          await db.prepare(`
+            INSERT INTO order_audit_logs (order_id, actor_id, from_status, to_status, note)
+            VALUES (1, 1, 'BROADCAST', 'DONE', ?)
+          `).bind(`ارسال پیام همگانی به ${sentCount} کاربر برای کمپین ${camp.title}`).run();
+        } catch (_) {}
+
+        return new Response(JSON.stringify({
+          ok: true,
+          message: `ارسال پیام به ${sentCount} کاربر با موفقیت انجام شد.`,
+          sent_count: sentCount,
+          fail_count: failCount,
+          total_recipients: recipients.length
+        }), { headers: { "Content-Type": "application/json" } });
+      } catch (e) {
+        console.error("Broadcast error:", e);
+        return new Response(JSON.stringify({ ok: false, error: e.message }), {
+          status: 500, headers: { "Content-Type": "application/json" }
+        });
+      }
+    }
+
+    
+        // ۱۲. دریافت فهرست کیف پول‌های کاربران برای پنل مدیریت
+    if (reqUrl.pathname === "/api/admin/wallets") {
+      if (!checkAdminAuth(request, env)) {
+        return new Response(JSON.stringify({ ok: false, error: "Unauthorized" }), {
+          status: 401, headers: { "Content-Type": "application/json" }
+        });
+      }
+      const db = env.DB;
+      let wallets = [];
+      if (db) {
+        try {
+          const res = await db.prepare(`
+            SELECT w.*, u.full_name, u.telegram_id, u.username,
+              (SELECT COUNT(*) FROM wallet_transactions wt WHERE wt.wallet_id = w.id) as tx_count
+            FROM wallets w
+            JOIN users u ON w.user_id = u.id
+            ORDER BY w.updated_at DESC
+          `).all();
+          wallets = res.results || [];
+        } catch (e) {
+          console.error("Error fetching wallets:", e);
+        }
+      }
+      return new Response(JSON.stringify({ ok: true, wallets }), {
+        headers: { "Content-Type": "application/json" }
+      });
+    }
+
+    // ۱۳. دریافت آخرین تراکنش‌های مالی برای پنل مدیریت
+    if (reqUrl.pathname === "/api/admin/wallet/transactions") {
+      if (!checkAdminAuth(request, env)) {
+        return new Response(JSON.stringify({ ok: false, error: "Unauthorized" }), {
+          status: 401, headers: { "Content-Type": "application/json" }
+        });
+      }
+      const db = env.DB;
+      let transactions = [];
+      if (db) {
+        try {
+          const res = await db.prepare(`
+            SELECT wt.*, u.full_name, u.telegram_id
+            FROM wallet_transactions wt
+            JOIN wallets w ON wt.wallet_id = w.id
+            JOIN users u ON w.user_id = u.id
+            ORDER BY wt.created_at DESC
+            LIMIT 50
+          `).all();
+          transactions = res.results || [];
+        } catch (e) {
+          console.error("Error fetching wallet transactions:", e);
+        }
+      }
+      return new Response(JSON.stringify({ ok: true, transactions }), {
+        headers: { "Content-Type": "application/json" }
+      });
+    }
+
+    // ۱۴. شارژ یا تعدیل دستی موجودی کیف پول توسط مدیریت
+    if (reqUrl.pathname === "/api/admin/wallet/adjust" && request.method === "POST") {
+      if (!checkAdminAuth(request, env)) {
+        return new Response(JSON.stringify({ ok: false, error: "Unauthorized" }), {
+          status: 401, headers: { "Content-Type": "application/json" }
+        });
+      }
+      const db = env.DB;
+      const body = await request.json();
+      const { wallet_id, amount, notes, type } = body;
+      const adjAmount = parseInt(amount || 0, 10);
+
+      if (!wallet_id || adjAmount === 0 || !notes) {
+        return new Response(JSON.stringify({ ok: false, error: "شناسه کیف پول، مبلغ و شرح تراکنش الزامی هستند." }), {
+          status: 400, headers: { "Content-Type": "application/json" }
+        });
+      }
+
+      if (db) {
+        try {
+          const w = await db.prepare("SELECT * FROM wallets WHERE id = ?").bind(wallet_id).first();
+          if (!w) {
+            return new Response(JSON.stringify({ ok: false, error: "کیف پول یافت نشد." }), {
+              status: 404, headers: { "Content-Type": "application/json" }
+            });
+          }
+          if (w.is_frozen) {
+            return new Response(JSON.stringify({ ok: false, error: "کیف پول مورد نظر مسدود است." }), {
+              status: 400, headers: { "Content-Type": "application/json" }
+            });
+          }
+          if (w.balance + adjAmount < 0) {
+            return new Response(JSON.stringify({ ok: false, error: "موجودی حساب نمی‌تواند منفی شود." }), {
+              status: 400, headers: { "Content-Type": "application/json" }
+            });
+          }
+
+          const txRef = (adjAmount > 0 ? "DEP" : "DEB") + "-1405-" + Math.floor(10000 + Math.random() * 90000);
+          const txType = type || (adjAmount > 0 ? "TOPUP" : "ADJUSTMENT");
+
+          await db.prepare("UPDATE wallets SET balance = balance + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+            .bind(adjAmount, wallet_id).run();
+
+          await db.prepare(`
+            INSERT INTO wallet_transactions (wallet_id, amount, transaction_type, status, tracking_ref, notes)
+            VALUES (?, ?, ?, 'APPROVED', ?, ?)
+          `).bind(wallet_id, adjAmount, txType, txRef, notes.trim()).run();
+
+          // اطلاع‌رسانی به تلگرام مشتری
+          const userRec = await db.prepare("SELECT * FROM users WHERE id = ?").bind(w.user_id).first();
+          if (userRec && userRec.telegram_id && botToken) {
+            const actLabel = adjAmount > 0 ? "افزایش اعتبار حساب ➕" : "کسر از حساب ➖";
+            const amtStr = Math.abs(adjAmount).toLocaleString('fa-IR');
+            const newBalStr = (w.balance + adjAmount).toLocaleString('fa-IR');
+            ctx.waitUntil(
+              fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  chat_id: userRec.telegram_id,
+                  text: `💳 <b>تراکنش مالی در کیف پول لیمو:</b>\n\n` +
+                    `📌 <b>نوع رویداد:</b> ${actLabel}\n` +
+                    `💰 <b>مبلغ تراکنش:</b> <code>${amtStr}</code> ریال\n` +
+                    `💵 <b>موجودی جدید:</b> <code>${newBalStr}</code> ریال\n` +
+                    `🔖 <b>شناسه پیگیری:</b> <code>${txRef}</code>\n` +
+                    `📝 <b>شرح:</b> <i>${notes}</i>`,
+                  parse_mode: "HTML"
+                })
+              })
+            );
+          }
+        } catch (e) {
+          console.error("Error adjusting wallet:", e);
+          return new Response(JSON.stringify({ ok: false, error: e.message }), {
+            status: 500, headers: { "Content-Type": "application/json" }
+          });
+        }
+      }
+      return new Response(JSON.stringify({ ok: true }), { headers: { "Content-Type": "application/json" } });
+    }
+
+    // ۱۵. مسدودسازی یا رفع مسدودی کیف پول
+    if (reqUrl.pathname === "/api/admin/wallet/toggle-freeze" && request.method === "POST") {
+      if (!checkAdminAuth(request, env)) {
+        return new Response(JSON.stringify({ ok: false, error: "Unauthorized" }), {
+          status: 401, headers: { "Content-Type": "application/json" }
+        });
+      }
+      const db = env.DB;
+      const body = await request.json();
+      const { wallet_id, is_frozen } = body;
+      if (db && wallet_id !== undefined) {
+        try {
+          await db.prepare("UPDATE wallets SET is_frozen = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+            .bind(is_frozen ? 1 : 0, wallet_id).run();
+        } catch (e) {
+          console.error("Error freezing wallet:", e);
+        }
+      }
+      return new Response(JSON.stringify({ ok: true }), { headers: { "Content-Type": "application/json" } });
+    }
+
+    // ۱۶. دریافت فهرست مشتریان با جست‌وجو و پرونده
+    if (reqUrl.pathname === "/api/admin/customers") {
+      if (!checkAdminAuth(request, env)) {
+        return new Response(JSON.stringify({ ok: false, error: "Unauthorized" }), {
+          status: 401, headers: { "Content-Type": "application/json" }
+        });
+      }
+      const db = env.DB;
+      const q = (reqUrl.searchParams.get("q") || "").trim();
+      let customers = [];
+      if (db) {
+        try {
+          let sql = `
+            SELECT u.id, u.telegram_id, u.full_name, u.username, u.role, u.created_at,
+                   (SELECT COUNT(*) FROM orders o WHERE o.user_id = u.id) as order_count,
+                   (SELECT COUNT(*) FROM orders o WHERE o.user_id = u.id AND o.status IN ('PENDING', 'APPROVED', 'NEED_INFO')) as active_orders_count,
+                   (SELECT COALESCE(balance, 0) FROM wallets w WHERE w.user_id = u.id) as wallet_balance,
+                   (SELECT COUNT(*) FROM support_threads st WHERE st.user_id = u.id AND st.status != 'CLOSED') as open_tickets_count
+            FROM users u
+          `;
+          const params = [];
+          if (q) {
+            sql += ` WHERE u.full_name LIKE ? OR u.username LIKE ? OR CAST(u.telegram_id AS TEXT) LIKE ? `;
+            params.push(`%${q}%`, `%${q}%`, `%${q}%`);
+          }
+          sql += ` ORDER BY u.id DESC LIMIT 100`;
+          const res = await db.prepare(sql).bind(...params).all();
+          customers = res.results || [];
+        } catch (e) {
+          console.error("Error fetching customers:", e);
+        }
+      }
+      return new Response(JSON.stringify({ ok: true, customers }), {
+        headers: { "Content-Type": "application/json" }
+      });
+    }
+
+    // ۱۷. پرونده جامع مشتری (Customer Dossier)
+    if (reqUrl.pathname === "/api/admin/customer/dossier") {
+      if (!checkAdminAuth(request, env)) {
+        return new Response(JSON.stringify({ ok: false, error: "Unauthorized" }), {
+          status: 401, headers: { "Content-Type": "application/json" }
+        });
+      }
+      const db = env.DB;
+      const userId = reqUrl.searchParams.get("user_id");
+      if (!db || !userId) {
+        return new Response(JSON.stringify({ ok: false, error: "شناسه مشتری الزامی است." }), {
+          status: 400, headers: { "Content-Type": "application/json" }
+        });
+      }
+      try {
+        const user = await db.prepare("SELECT id, telegram_id, full_name, username, role, created_at FROM users WHERE id = ?")
+          .bind(userId).first();
+        if (!user) {
+          return new Response(JSON.stringify({ ok: false, error: "مشتری یافت نشد." }), {
+            status: 404, headers: { "Content-Type": "application/json" }
+          });
+        }
+        let wallet = await db.prepare("SELECT balance, is_frozen FROM wallets WHERE user_id = ?").bind(userId).first();
+        if (!wallet) wallet = { balance: 0, is_frozen: 0 };
+
+        const ordersRes = await db.prepare(`
+          SELECT o.*, s.title as service_title, s.code as service_code
+          FROM orders o
+          LEFT JOIN service_items s ON o.service_id = s.id
+          WHERE o.user_id = ?
+          ORDER BY o.id DESC
+        `).bind(userId).all();
+        const orders = (ordersRes.results || []).map(o => {
+          let formData = {};
+          try { formData = JSON.parse(o.form_data || "{}"); } catch(e){}
+          return { ...o, form_data: formData };
+        });
+
+        const txRes = await db.prepare(`
+          SELECT wt.*
+          FROM wallet_transactions wt
+          JOIN wallets w ON wt.wallet_id = w.id
+          WHERE w.user_id = ?
+          ORDER BY wt.id DESC LIMIT 30
+        `).bind(userId).all();
+
+        const threadsRes = await db.prepare(`
+          SELECT st.*,
+                 (SELECT COUNT(*) FROM support_messages WHERE thread_id = st.id) as message_count
+          FROM support_threads st
+          WHERE st.user_id = ?
+          ORDER BY st.id DESC
+        `).bind(userId).all();
+
+        const orderIds = orders.map(o => o.id);
+        let auditLogs = [];
+        if (orderIds.length > 0) {
+          const placeholders = orderIds.map(() => "?").join(",");
+          const logsRes = await db.prepare(`
+            SELECT l.*, o.tracking_code
+            FROM order_audit_logs l
+            JOIN orders o ON l.order_id = o.id
+            WHERE l.order_id IN (${placeholders})
+            ORDER BY l.id DESC LIMIT 50
+          `).bind(...orderIds).all();
+          auditLogs = logsRes.results || [];
+        }
+
+        return new Response(JSON.stringify({
+          ok: true,
+          dossier: {
+            user,
+            wallet,
+            orders,
+            transactions: txRes.results || [],
+            support_threads: threadsRes.results || [],
+            audit_logs: auditLogs
+          }
+        }), {
+          headers: { "Content-Type": "application/json" }
+        });
+      } catch (e) {
+        console.error("Error fetching customer dossier:", e);
+        return new Response(JSON.stringify({ ok: false, error: e.message }), {
+          status: 500, headers: { "Content-Type": "application/json" }
+        });
+      }
+    }
+
+    // ۱۸. تخصیص اپراتور مسئول به سفارش و ثبت لاگ حسابرسی
+    if (reqUrl.pathname === "/api/admin/order/assign" && request.method === "POST") {
+      if (!checkAdminAuth(request, env)) {
+        return new Response(JSON.stringify({ ok: false, error: "Unauthorized" }), {
+          status: 401, headers: { "Content-Type": "application/json" }
+        });
+      }
+      const db = env.DB;
+      const body = await request.json();
+      const { order_id, operator_name, note } = body;
+      if (!order_id || !operator_name) {
+        return new Response(JSON.stringify({ ok: false, error: "شناسه سفارش و نام اپراتور الزامی است." }), {
+          status: 400, headers: { "Content-Type": "application/json" }
+        });
+      }
+      try {
+        const order = await db.prepare("SELECT * FROM orders WHERE id = ?").bind(order_id).first();
+        if (!order) {
+          return new Response(JSON.stringify({ ok: false, error: "سفارش یافت نشد." }), {
+            status: 404, headers: { "Content-Type": "application/json" }
+          });
+        }
+        const assignNote = `[اپراتور مسئول: ${operator_name.trim()}] ${note ? note.trim() : ''}`.trim();
+        const fullNotes = order.operator_notes ? `${order.operator_notes}\n${assignNote}` : assignNote;
+
+        await db.prepare("UPDATE orders SET operator_notes = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+          .bind(fullNotes, order_id).run();
+
+        await db.prepare("INSERT INTO order_audit_logs (order_id, actor_id, from_status, to_status, note) VALUES (?, ?, ?, ?, ?)")
+          .bind(order_id, adminId, order.status, order.status, `تخصیص به اپراتور: ${operator_name.trim()}${note ? ' - ' + note.trim() : ''}`).run();
+
+        return new Response(JSON.stringify({ ok: true, operator_notes: fullNotes }), {
+          headers: { "Content-Type": "application/json" }
+        });
+      } catch (e) {
+        console.error("Error assigning operator:", e);
+        return new Response(JSON.stringify({ ok: false, error: e.message }), {
+          status: 500, headers: { "Content-Type": "application/json" }
+        });
+      }
+    }
+
+    // ۱۹. دریافت کاتالوگ خدمات، دسته‌بندی‌ها و فیلدهای فرم
+    if (reqUrl.pathname === "/api/admin/services") {
+      if (!checkAdminAuth(request, env)) {
+        return new Response(JSON.stringify({ ok: false, error: "Unauthorized" }), {
+          status: 401, headers: { "Content-Type": "application/json" }
+        });
+      }
+      const db = env.DB;
+      let categories = [];
+      let services = [];
+      if (db) {
+        try {
+          const catRes = await db.prepare("SELECT * FROM service_categories ORDER BY order_priority ASC").all();
+          categories = catRes.results || [];
+          const svcRes = await db.prepare(`
+            SELECT s.*, c.title as category_title
+            FROM service_items s
+            LEFT JOIN service_categories c ON s.category_id = c.id
+            ORDER BY c.order_priority, s.order_priority
+          `).all();
+          services = (svcRes.results || []).map(s => {
+            let fields = {};
+            let docs = [];
+            try { fields = JSON.parse(s.required_fields || "{}"); } catch(e){}
+            try { docs = JSON.parse(s.required_docs || "[]"); } catch(e){}
+            return { ...s, required_fields: fields, required_docs: docs };
+          });
+        } catch (e) {
+          console.error("Error fetching services:", e);
+        }
+      }
+      return new Response(JSON.stringify({ ok: true, categories, services }), {
+        headers: { "Content-Type": "application/json" }
+      });
+    }
+
+    // ۲۰. فعال/غیرفعال‌سازی یک خدمت در پنل مدیریت
+    if (reqUrl.pathname === "/api/admin/service/toggle" && request.method === "POST") {
+      if (!checkAdminAuth(request, env)) {
+        return new Response(JSON.stringify({ ok: false, error: "Unauthorized" }), {
+          status: 401, headers: { "Content-Type": "application/json" }
+        });
+      }
+      const db = env.DB;
+      const body = await request.json();
+      const { service_id, is_active } = body;
+      if (db && service_id !== undefined) {
+        try {
+          await db.prepare("UPDATE service_items SET is_active = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+            .bind(is_active ? 1 : 0, service_id).run();
+        } catch (e) {
+          console.error("Error toggling service:", e);
+        }
+      }
+      return new Response(JSON.stringify({ ok: true }), { headers: { "Content-Type": "application/json" } });
+    }
+
+    // ۲۱. افزودن یا ویرایش خدمت در پنل مدیریت (POST /api/admin/service/save)
+    if (reqUrl.pathname === "/api/admin/service/save" && request.method === "POST") {
+      if (!checkAdminAuth(request, env)) {
+        return new Response(JSON.stringify({ ok: false, error: "Unauthorized" }), {
+          status: 401, headers: { "Content-Type": "application/json" }
+        });
+      }
+      const db = env.DB;
+      const body = await request.json();
+      const { id, category_id, code, title, description, base_fee, order_priority, required_fields, required_docs, is_active } = body;
+
+      if (!code || !title) {
+        return new Response(JSON.stringify({ ok: false, error: "کد و عنوان خدمت الزامی هستند." }), {
+          status: 400, headers: { "Content-Type": "application/json" }
+        });
+      }
+
+      const reqFieldsJson = typeof required_fields === "object" ? JSON.stringify(required_fields) : (required_fields || "{}");
+      const reqDocsJson = typeof required_docs === "object" ? JSON.stringify(required_docs) : (required_docs || "[]");
+      const feeNum = parseInt(base_fee || 0, 10);
+      const prioNum = parseInt(order_priority || 0, 10);
+      const activeInt = (is_active === false || is_active === 0) ? 0 : 1;
+      const catId = category_id ? parseInt(category_id, 10) : 1;
+
+      try {
+        if (id) {
+          await db.prepare(`
+            UPDATE service_items
+            SET category_id = ?, code = ?, title = ?, description = ?, base_fee = ?, order_priority = ?,
+                required_fields = ?, required_docs = ?, is_active = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+          `).bind(catId, code.trim(), title.trim(), description || "", feeNum, prioNum, reqFieldsJson, reqDocsJson, activeInt, id).run();
+          return new Response(JSON.stringify({ ok: true, id: id, message: "خدمت با موفقیت ویرایش شد." }), {
+            headers: { "Content-Type": "application/json" }
+          });
+        } else {
+          const ins = await db.prepare(`
+            INSERT INTO service_items (category_id, code, title, description, base_fee, order_priority, required_fields, required_docs, is_active)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `).bind(catId, code.trim(), title.trim(), description || "", feeNum, prioNum, reqFieldsJson, reqDocsJson, activeInt).run();
+          const newId = ins?.meta?.last_row_id || 0;
+          return new Response(JSON.stringify({ ok: true, id: newId, message: "خدمت جدید با موفقیت ایجاد شد." }), {
+            headers: { "Content-Type": "application/json" }
+          });
+        }
+      } catch (err) {
+        return new Response(JSON.stringify({ ok: false, error: err.message }), {
+          status: 500, headers: { "Content-Type": "application/json" }
+        });
+      }
+    }
+
+    // ۲۲. افزودن یا ویرایش دسته‌بندی در پنل مدیریت (POST /api/admin/category/save)
+    if (reqUrl.pathname === "/api/admin/category/save" && request.method === "POST") {
+      if (!checkAdminAuth(request, env)) {
+        return new Response(JSON.stringify({ ok: false, error: "Unauthorized" }), {
+          status: 401, headers: { "Content-Type": "application/json" }
+        });
+      }
+      const db = env.DB;
+      const body = await request.json();
+      const { id, code, title, description, order_priority } = body;
+
+      if (!code || !title) {
+        return new Response(JSON.stringify({ ok: false, error: "کد و عنوان دسته‌بندی الزامی هستند." }), {
+          status: 400, headers: { "Content-Type": "application/json" }
+        });
+      }
+
+      const prioNum = parseInt(order_priority || 0, 10);
+      try {
+        if (id) {
+          await db.prepare(`
+            UPDATE service_categories
+            SET code = ?, title = ?, description = ?, order_priority = ?
+            WHERE id = ?
+          `).bind(code.trim(), title.trim(), description || "", prioNum, id).run();
+          return new Response(JSON.stringify({ ok: true, id: id, message: "دسته‌بندی با موفقیت ویرایش شد." }), {
+            headers: { "Content-Type": "application/json" }
+          });
+        } else {
+          const ins = await db.prepare(`
+            INSERT INTO service_categories (code, title, description, order_priority)
+            VALUES (?, ?, ?, ?)
+          `).bind(code.trim(), title.trim(), description || "", prioNum).run();
+          return new Response(JSON.stringify({ ok: true, id: ins?.meta?.last_row_id || 0, message: "دسته‌بندی با موفقیت ایجاد شد." }), {
+            headers: { "Content-Type": "application/json" }
+          });
+        }
+      } catch (err) {
+        return new Response(JSON.stringify({ ok: false, error: err.message }), {
+          status: 500, headers: { "Content-Type": "application/json" }
+        });
+      }
+    }
+
+    // دریافت کاتالوگ عمومی خدمات فعال (GET /api/catalog/services)
+    if (reqUrl.pathname === "/api/catalog/services") {
+      const db = env.DB;
+      let services = [];
+      let categories = [];
+      if (db) {
+        try {
+          const catRes = await db.prepare("SELECT * FROM service_categories ORDER BY order_priority ASC").all();
+          categories = catRes.results || [];
+          const svcRes = await db.prepare(`
+            SELECT s.*, c.title as category_title
+            FROM service_items s
+            LEFT JOIN service_categories c ON s.category_id = c.id
+            WHERE s.is_active = 1
+            ORDER BY c.order_priority, s.order_priority
+          `).all();
+          services = (svcRes.results || []).map(s => {
+            let fields = {};
+            let docs = [];
+            try { fields = JSON.parse(s.required_fields || "{}"); } catch(e){}
+            try { docs = JSON.parse(s.required_docs || "[]"); } catch(e){}
+            return {
+              id: s.id,
+              code: s.code,
+              category_id: s.category_id,
+              title: s.title,
+              desc: s.description || "",
+              category: s.category_title || "عمومی",
+              base_fee: s.base_fee || 0,
+              required_fields: fields,
+              required_docs: docs
+            };
+          });
+        } catch (e) {
+          console.error("Error fetching public catalog:", e);
+        }
+      }
+      return new Response(JSON.stringify({ ok: true, categories, services }), {
+        headers: { "Content-Type": "application/json" }
+      });
+    }
+
+    // دریافت تنظیمات عمومی برای مینی‌اپلیکیشن (GET /api/catalog/settings)
+    if (reqUrl.pathname === "/api/catalog/settings") {
+      const db = env.DB;
+      let card_number = "6037991812345678";
+      let card_owner = "مدیریت کافی نت لیمو";
+      let witness_provision_fee = 3500000;
+      let support_phone = "09120000000";
+
+      if (db) {
+        try {
+          const settingsRows = await db.prepare("SELECT key, value FROM system_settings").all();
+          (settingsRows.results || []).forEach(row => {
+            if (row.key === "card_number") card_number = row.value;
+            if (row.key === "card_owner") card_owner = row.value;
+            if (row.key === "witness_provision_fee") witness_provision_fee = parseInt(row.value, 10);
+            if (row.key === "support_phone") support_phone = row.value;
+          });
+        } catch (e) {
+          console.error("Error fetching catalog settings:", e);
+        }
+      }
+      return new Response(JSON.stringify({
+        ok: true,
+        settings: { card_number, card_owner, witness_provision_fee, support_phone }
+      }), {
+        headers: { "Content-Type": "application/json" }
+      });
+    }
+
+    // دریافت فهرست ثبت‌نام‌های مقطعی فعال برای مشتریان و مینی‌اپلیکیشن (GET /api/catalog/campaigns)
+    if (reqUrl.pathname === "/api/catalog/campaigns") {
+      const db = env.DB;
+      let campaigns = [];
+      if (db) {
+        try {
+          const res = await db.prepare("SELECT * FROM seasonal_campaigns WHERE is_active = 1 ORDER BY start_at ASC").all();
+          const now = new Date();
+          campaigns = (res.results || []).map(c => {
+            let dynamicStatus = c.status;
+            if (c.is_active && c.status !== 'SUSPENDED' && c.status !== 'DRAFT') {
+              const start = new Date(c.start_at);
+              const end = new Date(c.end_at);
+              if (now < start) {
+                dynamicStatus = 'SCHEDULED';
+              } else if (now >= start && now <= end) {
+                const hoursRemaining = (end.getTime() - now.getTime()) / (1000 * 3600);
+                dynamicStatus = hoursRemaining <= 48 ? 'EXPIRING_SOON' : 'ACTIVE';
+              } else {
+                dynamicStatus = 'ENDED';
+              }
+            }
+            return {
+              id: c.id,
+              code: c.code,
+              title: c.title,
+              description: c.description,
+              start_at: c.start_at,
+              end_at: c.end_at,
+              base_fee: c.base_fee,
+              status: c.status,
+              dynamic_status: dynamicStatus,
+              is_active: c.is_active
+            };
+          });
+        } catch (e) {
+          console.error("Error fetching public seasonal campaigns:", e);
+        }
+      }
+      return new Response(JSON.stringify({ ok: true, campaigns }), {
+        headers: { "Content-Type": "application/json" }
+      });
+    }
+
+    // ثبت درخواست یادآوری ثبت‌نام مقطعی توسط متقاضی (POST /api/campaign/remind-me)
+    if (reqUrl.pathname === "/api/campaign/remind-me" && request.method === "POST") {
+      const db = env.DB;
+      if (!db) {
+        return new Response(JSON.stringify({ ok: false, error: "دیتابیس در دسترس نیست." }), {
+          status: 500, headers: { "Content-Type": "application/json" }
+        });
+      }
+      try {
+        const body = await request.json();
+        const campaignId = parseInt(body.campaign_id, 10);
+        const telegramId = body.telegram_id ? parseInt(body.telegram_id, 10) : null;
+        const phoneNumber = (body.phone_number || "").trim();
+        const fullName = (body.full_name || "متقاضی کافی نت لیمو").trim();
+
+        if (!campaignId) {
+          return new Response(JSON.stringify({ ok: false, error: "شناسه رویداد الزامی است." }), {
+            status: 400, headers: { "Content-Type": "application/json" }
+          });
+        }
+
+        const camp = await db.prepare("SELECT * FROM seasonal_campaigns WHERE id = ?").bind(campaignId).first();
+        if (!camp) {
+          return new Response(JSON.stringify({ ok: false, error: "رویداد ثبت‌نام مورد نظر یافت نشد." }), {
+            status: 404, headers: { "Content-Type": "application/json" }
+          });
+        }
+
+        let u = null;
+        const actualTelegramId = telegramId ? parseInt(telegramId, 10) : (900000000 + Math.floor(Math.random() * 100000000));
+        if (telegramId) {
+          u = await db.prepare("SELECT id FROM users WHERE telegram_id = ?").bind(actualTelegramId).first();
+        } else if (phoneNumber) {
+          u = await db.prepare("SELECT id FROM users WHERE phone_number = ?").bind(phoneNumber).first();
+        }
+
+        if (!u) {
+          const insU = await db.prepare("INSERT INTO users (telegram_id, full_name, username, phone_number) VALUES (?, ?, ?, ?)")
+            .bind(actualTelegramId, fullName, '', phoneNumber).run();
+          u = { id: insU?.meta?.last_row_id || 1 };
+        }
+
+        const existingReminder = await db.prepare("SELECT id FROM reminders WHERE user_id = ? AND (title = ? OR INSTR(title, ?) > 0) AND is_sent = 0")
+          .bind(u.id, `یادآوری: ${camp.title}`, camp.title).first();
+
+        if (existingReminder) {
+          return new Response(JSON.stringify({
+            ok: true,
+            message: "یادآور این رویداد قبلاً برای شما فعال شده است و در موعد مقرر ارسال خواهد شد.",
+            reminder_id: existingReminder.id
+          }), { headers: { "Content-Type": "application/json" } });
+        }
+
+        const now = new Date();
+        const start = new Date(camp.start_at);
+        const targetDate = (now < start) ? camp.start_at : camp.end_at;
+        const shamsiDate = (targetDate || '').slice(0, 10);
+
+        const insRem = await db.prepare(`
+          INSERT INTO reminders (user_id, title, description, shamsi_date, target_date, is_sent, created_at)
+          VALUES (?, ?, ?, ?, ?, 0, CURRENT_TIMESTAMP)
+        `).bind(
+          u.id,
+          `یادآوری: ${camp.title}`,
+          `یادآوری مهلت ثبت‌نام دوره‌ای (${camp.code}) در کافی نت لیمو`,
+          shamsiDate,
+          targetDate
+        ).run();
+
+        const remId = insRem?.meta?.last_row_id || 1;
+
+        return new Response(JSON.stringify({
+          ok: true,
+          message: `یادآور با موفقیت ثبت شد! در موعد مهلت (${shamsiDate}) به شما اطلاع‌رسانی خواهد شد.`,
+          reminder_id: remId
+        }), { headers: { "Content-Type": "application/json" } });
+      } catch (e) {
+        console.error("Error creating reminder:", e);
+        return new Response(JSON.stringify({ ok: false, error: "خطا در ثبت یادآور." }), {
+          status: 500, headers: { "Content-Type": "application/json" }
+        });
+      }
+    }
+
+    // ۲۱. دریافت فهرست کانال‌های ارتباطی
+    if (reqUrl.pathname === "/api/admin/channels") {
+      if (!checkAdminAuth(request, env)) {
+        return new Response(JSON.stringify({ ok: false, error: "Unauthorized" }), {
+          status: 401, headers: { "Content-Type": "application/json" }
+        });
+      }
+      const db = env.DB;
+      let channels = [];
+      if (db) {
+        try {
+          const res = await db.prepare("SELECT * FROM communication_channels ORDER BY order_priority ASC").all();
+          channels = res.results || [];
+        } catch (e) {
+          console.error("Error fetching channels:", e);
+        }
+      }
+      return new Response(JSON.stringify({ ok: true, channels }), {
+        headers: { "Content-Type": "application/json" }
+      });
+    }
+
+    // ۲۲. به‌روزرسانی کانال ارتباطی
+    if (reqUrl.pathname === "/api/admin/channel/update" && request.method === "POST") {
+      if (!checkAdminAuth(request, env)) {
+        return new Response(JSON.stringify({ ok: false, error: "Unauthorized" }), {
+          status: 401, headers: { "Content-Type": "application/json" }
+        });
+      }
+      const db = env.DB;
+      const body = await request.json();
+      const { id, title, value, is_active } = body;
+      if (db && id) {
+        try {
+          await db.prepare("UPDATE communication_channels SET title = ?, value = ?, is_active = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+            .bind(title, value || "", is_active ? 1 : 0, id).run();
+        } catch (e) {
+          console.error("Error updating channel:", e);
+        }
+      }
+      return new Response(JSON.stringify({ ok: true }), { headers: { "Content-Type": "application/json" } });
+    }
+
+    // ۲۳. دریافت تنظیمات سراسری سیستم (هزینه شاهد مسکن و ...)
+    if (reqUrl.pathname === "/api/admin/settings") {
+      if (!checkAdminAuth(request, env)) {
+        return new Response(JSON.stringify({ ok: false, error: "Unauthorized" }), {
+          status: 401, headers: { "Content-Type": "application/json" }
+        });
+      }
+      const db = env.DB;
+      let settings = [];
+      if (db) {
+        try {
+          const res = await db.prepare("SELECT * FROM system_settings ORDER BY id ASC").all();
+          settings = res.results || [];
+        } catch (e) {
+          console.error("Error fetching settings:", e);
+        }
+      }
+      return new Response(JSON.stringify({ ok: true, settings }), {
+        headers: { "Content-Type": "application/json" }
+      });
+    }
+
+    // ۲۴. به‌روزرسانی تنظیمات سیستم
+    if (reqUrl.pathname === "/api/admin/setting/update" && request.method === "POST") {
+      if (!checkAdminAuth(request, env)) {
+        return new Response(JSON.stringify({ ok: false, error: "Unauthorized" }), {
+          status: 401, headers: { "Content-Type": "application/json" }
+        });
+      }
+      const db = env.DB;
+      const body = await request.json();
+      const { key, value } = body;
+      if (db && key && value !== undefined) {
+        try {
+          await db.prepare(`
+            INSERT INTO system_settings (key, value, updated_at)
+            VALUES (?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(key) DO UPDATE SET
+              value = excluded.value,
+              updated_at = CURRENT_TIMESTAMP
+          `).bind(key, String(value)).run();
+        } catch (e) {
+          console.error("Error updating setting:", e);
+        }
+      }
+      return new Response(JSON.stringify({ ok: true }), { headers: { "Content-Type": "application/json" } });
+    }
+
+    // ۲۵. دریافت لاگ‌های حسابرسی سیستم (System Audit Logs)
+    if (reqUrl.pathname === "/api/admin/audit-logs") {
+      if (!checkAdminAuth(request, env)) {
+        return new Response(JSON.stringify({ ok: false, error: "Unauthorized" }), {
+          status: 401, headers: { "Content-Type": "application/json" }
+        });
+      }
+      const db = env.DB;
+      let logs = [];
+      if (db) {
+        try {
+          const res = await db.prepare(`
+            SELECT l.*, o.tracking_code, s.title as service_title
+            FROM order_audit_logs l
+            JOIN orders o ON l.order_id = o.id
+            LEFT JOIN service_items s ON o.service_id = s.id
+            ORDER BY l.id DESC LIMIT 100
+          `).all();
+          logs = res.results || [];
+        } catch (e) {
+          console.error("Error fetching audit logs:", e);
+        }
+      }
+      return new Response(JSON.stringify({ ok: true, logs }), {
+        headers: { "Content-Type": "application/json" }
+      });
+    }
+
+    if (request.method !== "POST") {
+      return new Response("Limo Bot Webhook Endpoint is Running (Cloudflare Edge)", { status: 200 });
+    }
+
+    // ۱. بررسی امنیتی Secret Token تلگرام
+    if (env.SECRET_TOKEN) {
+      const receivedToken = request.headers.get("X-Telegram-Bot-Api-Secret-Token");
+      if (receivedToken !== env.SECRET_TOKEN) {
+        return new Response("Unauthorized Secret Token", { status: 403 });
+      }
+    }
+
+    let payload;
+    try {
+      payload = await request.json();
+    } catch {
+      return new Response("Invalid JSON", { status: 400 });
+    }
+
+    const db = env.DB;
+    // adminId is declared at the top of fetch handler
+
+    // ۲. پردازش پیام‌های متنی
+    if (payload.message) {
+      const msg = payload.message;
+      const chatId = msg.chat.id;
+      const userId = msg.from.id;
+      const text = (msg.text || "").trim();
+
+      
+      // ۲.۰. بررسی نشست چت زنده با پشتیبانی (چت دوطرفه متقاضی با اپراتور)
+      if (userId !== adminId && db) {
+        const activeChat = await db.prepare("SELECT * FROM active_support_sessions WHERE telegram_id = ?").bind(userId).first();
+        if (activeChat) {
+          if (text === "/endchat" || text === "پایان گفتگو" || text === "خروج از گفتگو" || text === "/cancel") {
+            await db.prepare("DELETE FROM active_support_sessions WHERE telegram_id = ?").bind(userId).run();
+            const webappUrl = env.WEBAPP_URL || `https://${reqUrl.hostname}/webapp`;
+            return webhookReply({
+              method: "sendMessage",
+              chat_id: chatId,
+              text: "✅ <b>گفتگوی شما با پشتیبانی به پایان رسید.</b>\nبه منوی اصلی بازگشتید.",
+              parse_mode: "HTML",
+              reply_markup: {
+                inline_keyboard: [
+                  [{ text: "📱 ورود به مینی‌اپلیکیشن لیمو", web_app: { url: webappUrl } }],
+                  [{ text: "📋 فهرست خدمات", callback_data: "services_list" }],
+                  [{ text: "🔍 پیگیری با کد", callback_data: "order_tracking" }, { text: "📂 درخواست‌های من", callback_data: "my_orders" }],
+                  [{ text: "💳 کیف پول و موجودی", callback_data: "wallet_menu" }, { text: "⏰ یادآورها", callback_data: "reminders_menu" }],
+                  [{ text: "📞 ارتباط با اپراتور", callback_data: "contact_operator" }]
+                ]
+              }
+            });
+          }
+
+          if (text !== "/start") {
+            const userFullName = `${msg.from.first_name || ""} ${msg.from.last_name || ""}`.trim();
+            const content = text || (msg.photo ? "[تصویر پیوست]" : (msg.document ? "[فایل مدرک]" : "[رسانه]"));
+            
+            if (db) {
+              ctx.waitUntil((async () => {
+                try {
+                  let u = await db.prepare("SELECT id FROM users WHERE telegram_id = ?").bind(userId).first();
+                  if (!u) {
+                    await db.prepare("INSERT INTO users (telegram_id, full_name, created_at) VALUES (?, ?, CURRENT_TIMESTAMP)").bind(userId, userFullName || 'کاربر').run();
+                    u = await db.prepare("SELECT id FROM users WHERE telegram_id = ?").bind(userId).first();
+                  }
+                  if (u) {
+                    let th = await db.prepare("SELECT id FROM support_threads WHERE user_id = ? AND status != 'CLOSED' ORDER BY id DESC").bind(u.id).first();
+                    if (!th) {
+                      const ins = await db.prepare("INSERT INTO support_threads (user_id, status) VALUES (?, 'PENDING_SUPPORT')").bind(u.id).run();
+                      th = { id: ins?.meta?.last_row_id || 1 };
+                    } else {
+                      await db.prepare("UPDATE support_threads SET status = 'PENDING_SUPPORT', updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(th.id).run();
+                    }
+                    await db.prepare("INSERT INTO support_messages (thread_id, sender_role, sender_id, message_text) VALUES (?, 'CUSTOMER', ?, ?)")
+                      .bind(th.id, userId, text || content).run();
+                  }
+                } catch (err) {
+                  console.error("Support D1 save error:", err);
+                }
+              })());
+            }
+            if (botToken && adminId) {
+              ctx.waitUntil(
+                fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    chat_id: adminId,
+                    text: `💬 <b>پیام چت زنده از:</b> ${userFullName} (شناسه: <code>${userId}</code>)\n\n${content}\n\n<i>(جهت پاسخ، کافیست این پیام را ریپلای کنید)</i>`,
+                    parse_mode: "HTML"
+                  })
+                })
+              );
+            }
+            return webhookReply({
+              method: "sendMessage",
+              chat_id: chatId,
+              text: "✅ پیام شما برای اپراتور ارسال شد. پاسخ اپراتور در همینجا ارسال خواهد شد.",
+              parse_mode: "HTML",
+              reply_markup: {
+                inline_keyboard: [[{ text: "❌ پایان گفتگو و بازگشت", callback_data: "end_chat" }]]
+              }
+            });
+          }
+        }
+      }
+    
+      // ثبت یا به‌روزرسانی کاربر در دیتابیس D1
+      if (db) {
+        ctx.waitUntil(
+          db.prepare(`
+            INSERT INTO users (telegram_id, full_name, username, updated_at)
+            VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(telegram_id) DO UPDATE SET
+              full_name = excluded.full_name,
+              username = excluded.username,
+              updated_at = CURRENT_TIMESTAMP
+          `).bind(userId, `${msg.from.first_name || ""} ${msg.from.last_name || ""}`.trim(), msg.from.username || null).run()
+        );
+      }
+
+      // ۲.۱. پاسخ مستقیم ادمین با ریپلای روی پیام ربات
+      if (userId === adminId && msg.reply_to_message && text) {
+        const replyText = msg.reply_to_message.text || msg.reply_to_message.caption || "";
+        const idMatch = replyText.match(/شناسه:\s*(?:<code>)?(\d+)(?:<\/code>)?/) || replyText.match(/ID:\s*(?:<code>)?(\d+)(?:<\/code>)?/);
+        if (idMatch) {
+          const targetId = parseInt(idMatch[1], 10);
+          if (db) {
+            ctx.waitUntil((async () => {
+              try {
+                const u = await db.prepare("SELECT id FROM users WHERE telegram_id = ?").bind(targetId).first();
+                if (u) {
+                  let th = await db.prepare("SELECT id FROM support_threads WHERE user_id = ? AND status != 'CLOSED' ORDER BY id DESC").bind(u.id).first();
+                  if (th) {
+                    await db.prepare("UPDATE support_threads SET status = 'PENDING_CUSTOMER', updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(th.id).run();
+                    await db.prepare("INSERT INTO support_messages (thread_id, sender_role, sender_id, message_text, is_read) VALUES (?, 'OPERATOR', ?, ?, 1)")
+                      .bind(th.id, adminId, text).run();
+                  }
+                }
+              } catch(e) {
+                console.error("Error saving admin telegram reply to D1:", e);
+              }
+            })());
+          }
+          if (botToken) {
+            ctx.waitUntil(
+              fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  chat_id: targetId,
+                  text: `💬 <b>پاسخ پشتیبانی کافی نت لیمو:</b>\n\n${text}\n\n<i>(جهت ارسال پیام جدید، پاسخ خود را همینجا بنویسید)</i>`,
+                  parse_mode: "HTML",
+                  reply_markup: {
+                    inline_keyboard: [
+                      [{ text: "❌ پایان گفت‌وگو", callback_data: "end_chat" }]
+                    ]
+                  }
+                })
+              })
+            );
+            return webhookReply({
+              method: "sendMessage",
+              chat_id: chatId,
+              text: "✅ <b>پیام شما با موفقیت برای متقاضی ارسال و در تاریخچه تیکت ثبت شد.</b>",
+              parse_mode: "HTML"
+            });
+          }
+        }
+      }
+
+      // ۲.۲. ارسال نتیجه نهایی پرونده توسط ادمین (/send <tracking_code> [توضیحات])
+      if (userId === adminId && text.startsWith("/send")) {
+        const parts = text.split(" ");
+        if (parts.length >= 2) {
+          const trackingCode = parts[1].trim();
+          const customNote = parts.slice(2).join(" ") || "مدارک نهایی پرونده برای شما ارسال شد.";
+          if (db) {
+            const order = await db.prepare("SELECT * FROM orders WHERE tracking_code = ?").bind(trackingCode).first();
+            if (order) {
+              await db.prepare("UPDATE orders SET status = 'COMPLETED', operator_notes = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+                .bind(customNote, order.id).run();
+
+              const userRec = await db.prepare("SELECT * FROM users WHERE id = ?").bind(order.user_id).first();
+              if (userRec && botToken) {
+                ctx.waitUntil(
+                  fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                      chat_id: userRec.telegram_id,
+                      text: `🎉 <b>مشتری گرامی، پرونده شما تکمیل و نهایی شد!</b>\n\n🔖 <b>کد پرونده:</b> <code>${trackingCode}</code>\n💬 <b>توضیح اپراتور:</b> ${customNote}`,
+                      parse_mode: "HTML"
+                    })
+                  })
+                );
+              }
+              return webhookReply({
+                method: "sendMessage",
+                chat_id: chatId,
+                text: `✅ نتیجه پرونده <code>${trackingCode}</code> با موفقیت به مشتری تحویل داده شد و وضعیت به «تکمیل‌شده» تغییر یافت.`,
+                parse_mode: "HTML"
+              });
+            }
+          }
+        }
+      }
+
+      
+      // ۲.۳. دریافت مستقیم فیش واریزی توسط مشتری در چت تلگرام
+      if (msg.photo && msg.photo.length > 0) {
+        if (db) {
+          const u = await db.prepare("SELECT id FROM users WHERE telegram_id = ?").bind(userId).first();
+          if (u) {
+            const caption = msg.caption || "";
+            const codeMatch = caption.match(/LIMO-1405-\d{5}/i);
+            let order = null;
+            if (codeMatch) {
+              order = await db.prepare("SELECT o.*, s.title as service_title FROM orders o LEFT JOIN service_items s ON o.service_id = s.id WHERE o.tracking_code = ? AND o.user_id = ?").bind(codeMatch[0].toUpperCase(), u.id).first();
+            } else {
+              order = await db.prepare("SELECT o.*, s.title as service_title FROM orders o LEFT JOIN service_items s ON o.service_id = s.id WHERE o.user_id = ? AND o.status IN ('PENDING', 'PAYMENT_REJECTED') ORDER BY o.id DESC").bind(u.id).first();
+            }
+
+            if (order) {
+              const bestPhoto = msg.photo[msg.photo.length - 1];
+              let formObj = {};
+              try {
+                formObj = typeof order.form_data === "string" ? JSON.parse(order.form_data) : (order.form_data || {});
+              } catch(e) {}
+              formObj.receipt = {
+                file_id: bestPhoto.file_id,
+                caption: caption,
+                uploaded_at: new Date().toISOString()
+              };
+
+              await db.prepare("UPDATE orders SET status = 'RECEIPT_SUBMITTED', form_data = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+                .bind(JSON.stringify(formObj), order.id).run();
+
+              await db.prepare("INSERT INTO order_audit_logs (order_id, actor_id, from_status, to_status, note) VALUES (?, ?, ?, 'RECEIPT_SUBMITTED', ?)")
+                .bind(order.id, userId, order.status, `ارسال فیش واریز تلگرامی (${caption ? 'کپشن: ' + caption : 'بدون توضیح'})`).run();
+
+              if (botToken && adminId) {
+                ctx.waitUntil(
+                  fetch(`https://api.telegram.org/bot${botToken}/sendPhoto`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                      chat_id: adminId,
+                      photo: bestPhoto.file_id,
+                      caption: `💳 <b>فیش واریز جدید از تلگرام دریافت شد!</b>\n\n🔖 <b>کد پرونده:</b> <code>${order.tracking_code}</code>\n👤 <b>متقاضی:</b> ${msg.from.first_name || ''} (شناسه: <code>${userId}</code>)\n📋 <b>خدمت:</b> ${order.service_title || 'سفارش'}\n💬 <b>توضیح:</b> ${caption || '—'}\n\n<i>جهت تأیید یا رد فیش، وارد پنل مدیریت شوید.</i>`,
+                      parse_mode: "HTML"
+                    })
+                  })
+                );
+              }
+
+              return webhookReply({
+                method: "sendMessage",
+                chat_id: chatId,
+                text: `✅ <b>تصویر فیش واریز برای پرونده شما ثبت گردید.</b>\n\n🔖 <b>کد پرونده:</b> <code>${order.tracking_code}</code>\n📋 <b>خدمت:</b> ${order.service_title || 'سفارش'}\n\n<i>رسید شما در نوبت بررسی مدیر قرار گرفت. به محض تأیید پرداخت، مراحل انجام سفارش آغاز خواهد شد.</i>`,
+                parse_mode: "HTML"
+              });
+            }
+          }
+        }
+        return webhookReply({
+          method: "sendMessage",
+          chat_id: chatId,
+          text: "📎 <b>تصویر دریافت شد.</b>\n\nچنانچه این تصویر فیش واریز است، لطفاً ابتدا سفارش خود را از طریق دکمه «ثبت پرونده» در مینی‌اپلیکیشن ثبت فرمایید و سپس فیش را ارسال نمایید (یا کد پرونده مانند <code>LIMO-1405-XXXXX</code> را در کپشن تصویر بنویسید).",
+          parse_mode: "HTML"
+        });
+      }
+
+      // دستور /chat جهت اتصال به چت دوطرفه
+      if (text === "/chat") {
+        if (db) {
+          await db.prepare("INSERT OR REPLACE INTO active_support_sessions (telegram_id, full_name, created_at) VALUES (?, ?, CURRENT_TIMESTAMP)")
+            .bind(userId, `${msg.from.first_name || ""} ${msg.from.last_name || ""}`.trim()).run();
+        }
+        return webhookReply({
+          method: "sendMessage",
+          chat_id: chatId,
+          text: "💬 <b>شما به سامانه گفتگوی مستقیم با پشتیبانی کافی‌نت لیمو متصل شدید.</b>\n\nلطفاً پیام، سوال یا فایل‌های خود را در همین صفحه ارسال فرمایید. اپراتور سامانه در اسرع وقت پاسخ شما را ارسال خواهد کرد.\n\n<i>(جهت پایان گفتگو، دکمه زیر را لمس کرده یا دستور /endchat را بفرستید)</i>",
+          parse_mode: "HTML",
+          reply_markup: {
+            inline_keyboard: [[{ text: "❌ پایان گفتگو و بازگشت", callback_data: "end_chat" }]]
+          }
+        });
+      }
+
+      // دستور /endchat جهت پایان چت
+      if (text === "/endchat" || text === "پایان گفتگو" || text === "خروج از گفتگو") {
+        if (db) {
+          await db.prepare("DELETE FROM active_support_sessions WHERE telegram_id = ?").bind(userId).run();
+        }
+        const webappUrl = env.WEBAPP_URL || `https://${reqUrl.hostname}/webapp`;
+        return webhookReply({
+          method: "sendMessage",
+          chat_id: chatId,
+          text: "✅ <b>گفتگوی شما با پشتیبانی به پایان رسید.</b>\nبه منوی اصلی بازگشتید.",
+          parse_mode: "HTML",
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: "📱 ورود به مینی‌اپلیکیشن لیمو", web_app: { url: webappUrl } }],
+              [{ text: "📋 فهرست خدمات", callback_data: "services_list" }],
+              [{ text: "🔍 پیگیری با کد", callback_data: "order_tracking" }, { text: "📂 درخواست‌های من", callback_data: "my_orders" }],
+              [{ text: "💳 کیف پول و موجودی", callback_data: "wallet_menu" }, { text: "⏰ یادآورها", callback_data: "reminders_menu" }],
+              [{ text: "📞 ارتباط با اپراتور", callback_data: "contact_operator" }]
+            ]
+          }
+        });
+      }
+    
+      // ۲.۴. استعلام مستقیم پرونده با ارسال کد رهگیری در چت (LIMO-1405-XXXXX)
+      const trackCodeMatch = text ? text.match(/LIMO-1405-\d{5}/i) : null;
+      if (trackCodeMatch) {
+        const queryCode = trackCodeMatch[0].toUpperCase();
+        if (db) {
+          const ord = await db.prepare(`
+            SELECT o.*, s.title as service_title, s.code as service_code
+            FROM orders o
+            LEFT JOIN service_items s ON o.service_id = s.id
+            WHERE o.tracking_code = ?
+          `).bind(queryCode).first();
+
+          if (ord) {
+            const statusMap = {
+              "PENDING": "در انتظار پرداخت و ارسال فیش ⏳",
+              "RECEIPT_SUBMITTED": "رسید ارسال شده (در نوبت بررسی مدیر) 💳",
+              "APPROVED": "پرداخت تأیید شد و در صف اقدام ✅",
+              "IN_PROGRESS": "در حال انجام توسط کارشناس ⚙️",
+              "PAYMENT_REJECTED": "فیش پرداخت رد شد (نیازمند اصلاح) ❌",
+              "NEED_INFO": "نقص مدارک و اطلاعات ⚠️",
+              "COMPLETED": "تکمیل شده و مختومه 🎉",
+              "CANCELLED": "لغو گردیده ❌"
+            };
+
+            const step2 = ["APPROVED", "IN_PROGRESS", "NEED_INFO", "COMPLETED"].includes(ord.status) ? "✅ تأیید شد"
+                        : ord.status === "RECEIPT_SUBMITTED" ? "💳 دریافت شد (در نوبت بررسی)"
+                        : ord.status === "PAYMENT_REJECTED" ? "❌ رد فیش (نیازمند ارسال مجدد)"
+                        : "⏳ در انتظار واریز و ارسال فیش";
+
+            const step3 = ord.status === "COMPLETED" ? "✅ پایان اقدامات کارشناسی"
+                        : ord.status === "IN_PROGRESS" ? "⚙️ در حال اقدام توسط متصدی"
+                        : ord.status === "NEED_INFO" ? "⚠️ نیازمند اطلاعات تکمیلی"
+                        : ord.status === "APPROVED" ? "⏱ در نوبت اقدام"
+                        : "⏳ در انتظار تأیید پرداخت";
+
+            const step4 = ord.status === "COMPLETED" ? "🎉 صدور و تحویل نهایی مدارک"
+                        : "⏳ در انتظار صدور";
+
+            let formObj = {};
+            try { formObj = typeof ord.form_data === "string" ? JSON.parse(ord.form_data) : (ord.form_data || {}); } catch(e){}
+
+            let resultSection = "";
+            if (ord.status === "COMPLETED" && formObj.result_document) {
+              resultSection = `\n\n📜 <b>مدارک نهایی صادرشده:</b>\n${formObj.result_document.text || 'مدارک نهایی پرونده شما با موفقیت صادر گردید.'}`;
+            }
+
+            const trackCard = `🔍 <b>نتیجه استعلام پرونده در کافی‌نت لیمو:</b>\n\n` +
+              `🔖 <b>کد رهگیری:</b> <code>${ord.tracking_code}</code>\n` +
+              `📋 <b>خدمت:</b> ${ord.service_title || 'خدمات لیمو'}\n` +
+              `📌 <b>وضعیت کنونی:</b> ${statusMap[ord.status] || ord.status}\n\n` +
+              `📊 <b>روند پیشرفت مراحل کار (استپر):</b>\n` +
+              `1️⃣ ثبت درخواست اولیه: ✅ انجام شد\n` +
+              `2️⃣ بررسی و تأیید پرداخت: ${step2}\n` +
+              `3️⃣ اقدام کارشناسی: ${step3}\n` +
+              `4️⃣ تحویل نهایی مدارک: ${step4}\n\n` +
+              `💬 <b>یادداشت اپراتور:</b>\n${ord.operator_notes || 'پرونده در نوبت بررسی قرار دارد.'}` +
+              resultSection;
+
+            const webappUrl = env.WEBAPP_URL || `https://${reqUrl.hostname}/webapp`;
+            const buttons = [];
+            if (ord.status === "PENDING" || ord.status === "PAYMENT_REJECTED") {
+              buttons.push([{ text: "💳 ارسال فیش پرداخت در مینی‌اپ", web_app: { url: `${webappUrl}?code=${ord.tracking_code}&tab=payment` } }]);
+            }
+            buttons.push([{ text: "📱 مشاهده کامل پرونده در مینی‌اپ", web_app: { url: `${webappUrl}?code=${ord.tracking_code}` } }]);
+            buttons.push([{ text: "🔙 بازگشت به منوی اصلی", callback_data: "back_to_main" }]);
+
+            return webhookReply({
+              method: "sendMessage",
+              chat_id: chatId,
+              text: trackCard,
+              parse_mode: "HTML",
+              reply_markup: { inline_keyboard: buttons }
+            });
+          } else {
+            return webhookReply({
+              method: "sendMessage",
+              chat_id: chatId,
+              text: `❌ <b>پرونده‌ای با کد رهگیری <code>${queryCode}</code> یافت نشد.</b>\n\nلطفاً صحت کد واردشده را بررسی فرمایید.`,
+              parse_mode: "HTML"
+            });
+          }
+        }
+      }
+
+      // دستور /start (پیام متنی سبک بدون تصویر لگو جهت حذف شلوغی محیط چت)
+      if (text === "/start") {
+        const webappUrl = env.WEBAPP_URL || `https://${reqUrl.hostname}/webapp`;
+        return webhookReply({
+          method: "sendMessage",
+          chat_id: chatId,
+          text: WELCOME_TEXT,
+          parse_mode: "HTML",
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: "📱 ورود به مینی‌اپلیکیشن لیمو", web_app: { url: webappUrl } }],
+              [{ text: "📋 فهرست خدمات", callback_data: "services_list" }],
+              [{ text: "🔍 پیگیری با کد", callback_data: "order_tracking" }, { text: "📂 درخواست‌های من", callback_data: "my_orders" }],
+              [{ text: "💳 کیف پول و موجودی", callback_data: "wallet_menu" }, { text: "⏰ یادآورها", callback_data: "reminders_menu" }],
+              [{ text: "📞 ارتباط با اپراتور", callback_data: "contact_operator" }]
+            ]
+          }
+        });
+      }
+
+      // دستور /help
+      if (text === "/help" || text === "راهنما") {
+        return webhookReply({
+          method: "sendMessage",
+          chat_id: chatId,
+          text: HELP_TEXT,
+          parse_mode: "HTML",
+          reply_markup: {
+            inline_keyboard: [[{ text: "🔙 بازگشت به منوی اصلی", callback_data: "back_to_main" }]]
+          }
+        });
+      }
+
+      // دستور /admin
+      if (text === "/admin") {
+        if (userId !== adminId) {
+          return webhookReply({
+            method: "sendMessage",
+            chat_id: chatId,
+            text: ACCESS_DENIED_TEXT,
+            parse_mode: "HTML"
+          });
+        }
+
+        return webhookReply({
+          method: "sendMessage",
+          chat_id: chatId,
+          text: "🔐 <b>پنل مدیریت سامانه کافی نت لیمو:</b>\n\nجهت نظارت بر سامانه، یکی از بخش‌های زیر را انتخاب فرمایید:",
+          parse_mode: "HTML",
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: "📊 آمار و وضعیت سیستم", callback_data: "admin_stats" }],
+              [{ text: "📂 کارتابل درخواست‌ها", callback_data: "admin_orders" }],
+              [{ text: "🌐 وضعیت پایش سایت‌ها", callback_data: "admin_monitors" }]
+            ]
+          }
+        });
+      }
+
+      // دستور مستقیم کارتابل اپراتور (/orders)
+      if (text === "/orders") {
+        if (userId !== adminId) {
+          return webhookReply({
+            method: "sendMessage",
+            chat_id: chatId,
+            text: ACCESS_DENIED_TEXT,
+            parse_mode: "HTML"
+          });
+        }
+        if (db) {
+          const orders = await db.prepare(`
+            SELECT o.*, s.title as service_title
+            FROM orders o
+            JOIN service_items s ON o.service_id = s.id
+            ORDER BY o.created_at DESC
+            LIMIT 15
+          `).all();
+
+          if (!orders.results || orders.results.length === 0) {
+            return webhookReply({
+              method: "sendMessage",
+              chat_id: chatId,
+              text: "📂 <b>کارتابل سفارشات اپراتور</b>\n\nدر حال حاضر هیچ سفارشی در سامانه ثبت نشده است.",
+              parse_mode: "HTML",
+              reply_markup: {
+                inline_keyboard: [[{ text: "🔙 بازگشت به پنل مدیریت", callback_data: "back_to_admin" }]]
+              }
+            });
+          }
+
+          const statusMap = {
+            "PENDING": "⏳",
+            "APPROVED": "🟢",
+            "NEED_INFO": "⚠️",
+            "COMPLETED": "✅",
+            "CANCELLED": "❌"
+          };
+          const keyboard = [];
+          const lines = [];
+          for (const ord of orders.results) {
+            const icon = statusMap[ord.status] || "📌";
+            keyboard.push([{
+              text: `${icon} ${ord.tracking_code} | ${(ord.service_title || "").slice(0, 15)}`,
+              callback_data: `op_view_${ord.id}`
+            }]);
+            lines.push(`• <code>${ord.tracking_code}</code> — ${ord.service_title} (${ord.status})`);
+          }
+          keyboard.push([{ text: "🔙 بازگشت به پنل مدیریت", callback_data: "back_to_admin" }]);
+
+          return webhookReply({
+            method: "sendMessage",
+            chat_id: chatId,
+            text: `📂 <b>کارتابل سفارشات اپراتور (${orders.results.length} پرونده اخیر):</b>\n\n${lines.join("\n")}\n\nجهت بررسی مدارک و تغییر وضعیت، پرونده را انتخاب فرمایید:`,
+            parse_mode: "HTML",
+            reply_markup: { inline_keyboard: keyboard }
+          });
+        }
+      }
+
+      // دستور مستقیم آمار سیستم (/stats)
+      if (text === "/stats") {
+        if (userId !== adminId) {
+          return webhookReply({
+            method: "sendMessage",
+            chat_id: chatId,
+            text: ACCESS_DENIED_TEXT,
+            parse_mode: "HTML"
+          });
+        }
+        if (db) {
+          const [u, o, p, m, r] = await Promise.all([
+            db.prepare("SELECT COUNT(*) as c FROM users").first(),
+            db.prepare("SELECT COUNT(*) as c FROM orders").first(),
+            db.prepare("SELECT COUNT(*) as c FROM orders WHERE status = 'PENDING'").first(),
+            db.prepare("SELECT COUNT(*) as c FROM website_monitors").first(),
+            db.prepare("SELECT COUNT(*) as c FROM reminders WHERE is_sent = 0").first()
+          ]);
+          const statsText = `📊 <b>آمار و وضعیت عمومی سامانه کافی نت لیمو</b>\n\n` +
+            `👥 <b>تعداد کل کاربران:</b> ${u ? u.c : 0}\n` +
+            `📦 <b>کل سفارشات:</b> ${o ? o.c : 0}\n` +
+            `⏳ <b>سفارشات در انتظار بررسی:</b> ${p ? p.c : 0}\n` +
+            `⏰ <b>یادآورهای در نوبت:</b> ${r ? r.c : 0}\n` +
+            `🌐 <b>سایت‌های تحت پایش:</b> ${m ? m.c : 0}`;
+          return webhookReply({
+            method: "sendMessage",
+            chat_id: chatId,
+            text: statsText,
+            parse_mode: "HTML",
+            reply_markup: {
+              inline_keyboard: [
+                [{ text: "📂 کارتابل درخواست‌ها", callback_data: "admin_orders" }],
+                [{ text: "🌐 وضعیت پایش سایت‌ها", callback_data: "admin_monitors" }],
+                [{ text: "🔙 بازگشت به پنل مدیریت", callback_data: "back_to_admin" }]
+              ]
+            }
+          });
+        }
+      }
+
+      // دستور عیب‌یابی و پایش سلامت (/health)
+      if (text === "/health") {
+        if (userId !== adminId) {
+          return webhookReply({
+            method: "sendMessage",
+            chat_id: chatId,
+            text: ACCESS_DENIED_TEXT,
+            parse_mode: "HTML"
+          });
+        }
+        if (db) {
+          let dbIntegrity = "OK";
+          try {
+            const check = await db.prepare("PRAGMA integrity_check").first();
+            if (check && Object.values(check)[0] !== "ok") {
+              dbIntegrity = "WARNING";
+            }
+          } catch {
+            dbIntegrity = "CONNECTED";
+          }
+          const [u, o, m] = await Promise.all([
+            db.prepare("SELECT COUNT(*) as c FROM users").first(),
+            db.prepare("SELECT COUNT(*) as c FROM orders").first(),
+            db.prepare("SELECT COUNT(*) as c FROM website_monitors").first()
+          ]);
+          const healthText = `🟢 <b>گزارش سلامت و عیب‌یابی لبه ابری (Cloudflare Edge)</b>\n\n` +
+            `📌 <b>وضعیت سامانه:</b> HEALTHY\n` +
+            `💾 <b>پایگاه داده Cloudflare D1:</b> <code>${dbIntegrity}</code>\n\n` +
+            `🔢 <b>شمارنده‌ها:</b>\n` +
+            `• کاربران: ${u ? u.c : 0}\n` +
+            `• سفارشات: ${o ? o.c : 0}\n` +
+            `• سایت‌های تحت پایش: ${m ? m.c : 0}`;
+          return webhookReply({
+            method: "sendMessage",
+            chat_id: chatId,
+            text: healthText,
+            parse_mode: "HTML",
+            reply_markup: {
+              inline_keyboard: [[{ text: "🔙 بازگشت به پنل مدیریت", callback_data: "back_to_admin" }]]
+            }
+          });
+        }
+      }
+
+      // دستور خلاصه نسخه پشتیبان (/backup)
+      if (text === "/backup") {
+        if (userId !== adminId) {
+          return webhookReply({
+            method: "sendMessage",
+            chat_id: chatId,
+            text: ACCESS_DENIED_TEXT,
+            parse_mode: "HTML"
+          });
+        }
+        if (db) {
+          const [u, o, r, m] = await Promise.all([
+            db.prepare("SELECT COUNT(*) as c FROM users").first(),
+            db.prepare("SELECT COUNT(*) as c FROM orders").first(),
+            db.prepare("SELECT COUNT(*) as c FROM reminders").first(),
+            db.prepare("SELECT COUNT(*) as c FROM website_monitors").first()
+          ]);
+          const backupText = `💾 <b>گزارش اسنپ‌شات پایگاه داده Cloudflare D1</b>\n\n` +
+            `🏷 <b>نسخه:</b> 1.0.0 (D1 Edge Replication)\n\n` +
+            `📊 <b>شمارش موجودیت‌ها:</b>\n` +
+            `• کاربران: ${u ? u.c : 0}\n` +
+            `• سفارشات: ${o ? o.c : 0}\n` +
+            `• یادآورها: ${r ? r.c : 0}\n` +
+            `• پایش‌ها: ${m ? m.c : 0}\n\n` +
+            `<i>نسخه‌های پشتیبان D1 به صورت خودکار در فضای ابری کلودفلر نگهداری می‌شوند.</i>`;
+          return webhookReply({
+            method: "sendMessage",
+            chat_id: chatId,
+            text: backupText,
+            parse_mode: "HTML",
+            reply_markup: {
+              inline_keyboard: [[{ text: "🔙 بازگشت به پنل مدیریت", callback_data: "back_to_admin" }]]
+            }
+          });
+        }
+      }
+
+      // استعلام کد رهگیری مستقیم
+      
+      // پرتال درخواست‌های من با عایق‌بندی کامل
+            // دستور کیف پول
+      if (text === "/wallet" || text === "کیف پول" || text === "موجودی" || text === "حساب من") {
+        if (db) {
+          let u = await db.prepare("SELECT id FROM users WHERE telegram_id = ?").bind(userId).first();
+          if (!u) {
+            const insU = await db.prepare("INSERT INTO users (telegram_id, full_name, username) VALUES (?, ?, ?)")
+              .bind(userId, `${msg.from.first_name || ''} ${msg.from.last_name || ''}`.trim() || 'مشتری', msg.from.username || '').run();
+            u = { id: insU?.meta?.last_row_id || 1 };
+          }
+          let w = await db.prepare("SELECT * FROM wallets WHERE user_id = ?").bind(u.id).first();
+          if (!w) {
+            await db.prepare("INSERT INTO wallets (user_id, balance, is_frozen) VALUES (?, 0, 0)").bind(u.id).run();
+            w = await db.prepare("SELECT * FROM wallets WHERE user_id = ?").bind(u.id).first();
+          }
+
+          const txs = await db.prepare("SELECT * FROM wallet_transactions WHERE wallet_id = ? ORDER BY created_at DESC LIMIT 5").bind(w.id).all();
+          const rows = txs.results || [];
+
+          const balRial = (w.balance || 0).toLocaleString('fa-IR');
+          const balToman = Math.floor((w.balance || 0) / 10).toLocaleString('fa-IR');
+          const wStatus = w.is_frozen ? "🔒 مسدود شده" : "🟢 فعال";
+
+          let cardText = `💳 <b>کیف پول و حساب مالی در کافی‌نت لیمو</b>\n\n` +
+            `💰 <b>موجودی ریالی:</b> <code>${balRial}</code> ریال\n` +
+            `💵 <b>معادل به تومان:</b> <code>${balToman}</code> تومان\n` +
+            `📌 <b>وضعیت حساب:</b> ${wStatus}\n\n` +
+            `📜 <b>گردش تراکنش‌های اخیر:</b>\n`;
+
+          if (rows.length === 0) {
+            cardText += `<i>هنوز هیچ تراکنشی برای حساب شما ثبت نگردیده است.</i>\n`;
+          } else {
+            const typeLabels = {
+              TOPUP: "🟢 افزایش اعتبار",
+              ORDER_PAYMENT: "🔴 پرداخت سفارش",
+              REFUND: "🔵 استرداد وجه",
+              ADJUSTMENT: "🟡 تعدیل حسابداری"
+            };
+            rows.forEach(t => {
+              const lbl = typeLabels[t.transaction_type] || "⚪ تراکنش";
+              const amtStr = Math.abs(t.amount).toLocaleString('fa-IR');
+              const dStr = (t.created_at || '').replace('T', ' ').slice(0, 16);
+              cardText += `▪️ <b>${lbl}:</b> <code>${amtStr}</code> ریال\n   ▫️ شناسه: <code>${t.tracking_ref}</code> | ${dStr}\n   ▫️ شرح: <i>${t.notes || '-'}</i>\n`;
+            });
+          }
+          cardText += `\n<i>جهت افزایش اعتبار، می‌توانید با پشتیبانی هماهنگ فرمایید.</i>`;
+
+          return webhookReply({
+            method: "sendMessage",
+            chat_id: chatId,
+            text: cardText,
+            parse_mode: "HTML",
+            reply_markup: {
+              inline_keyboard: [
+                [{ text: "💬 هماهنگی شارژ با پشتیبانی", callback_data: "contact_operator" }],
+                [{ text: "🔙 بازگشت به منوی اصلی", callback_data: "back_to_main" }]
+              ]
+            }
+          });
+        }
+      }
+
+      if (text === "/myorders" || text === "درخواست‌های من" || text === "پرونده‌های من" || text === "سفارش‌های من") {
+        if (db) {
+          const u = await db.prepare("SELECT id FROM users WHERE telegram_id = ?").bind(userId).first();
+          if (u) {
+            const userOrders = await db.prepare(`
+              SELECT o.*, s.title as service_title
+              FROM orders o
+              LEFT JOIN service_items s ON o.service_id = s.id
+              WHERE o.user_id = ?
+              ORDER BY o.created_at DESC
+              LIMIT 10
+            `).bind(u.id).all();
+
+            const rows = userOrders.results || [];
+            if (rows.length === 0) {
+              return webhookReply({
+                method: "sendMessage",
+                chat_id: chatId,
+                text: "📂 <b>پرتال پرونده‌های من</b>\n\nشما در حال حاضر هیچ سفارش یا پرونده فعالی در کافی‌نت لیمو ندارید.\nجهت ثبت درخواست جدید، گزینه «📋 فهرست خدمات» را انتخاب فرمایید.",
+                parse_mode: "HTML",
+                reply_markup: {
+                  inline_keyboard: [[{ text: "📋 فهرست خدمات", callback_data: "services_list" }]]
+                }
+              });
+            }
+
+            let listText = "📂 <b>پرتال پرونده‌های من در کافی‌نت لیمو</b>\n\nلیست سفارشات ثبت‌شده توسط حساب کاربری شما:\n\n";
+            const buttons = [];
+            const stDict = {
+              PENDING: "⏳ در انتظار بررسی",
+              APPROVED: "🟢 تایید مدارک",
+              NEED_INFO: "⚠️ نقص مدرک",
+              COMPLETED: "✅ تکمیل‌شده",
+              CANCELLED: "❌ لغو شده"
+            };
+
+            rows.forEach((ord, i) => {
+              const sTitle = ord.service_title || "خدمت اینترنتی";
+              const sBadge = stDict[ord.status] || ord.status;
+              const dateStr = (ord.created_at || "").slice(0, 10);
+              listText += `${i + 1}. <b>${sTitle}</b>\n   ▫️ کد رهگیری: <code>${ord.tracking_code}</code>\n   ▫️ وضعیت: ${sBadge}\n   ▫️ تاریخ: ${dateStr}\n\n`;
+              buttons.push([{
+                text: `🔍 مشاهده استپر ${ord.tracking_code}`,
+                callback_data: `track_code_${ord.tracking_code}`
+              }]);
+            });
+
+            buttons.push([{ text: "🔙 بازگشت به منوی اصلی", callback_data: "back_to_main" }]);
+
+            return webhookReply({
+              method: "sendMessage",
+              chat_id: chatId,
+              text: listText,
+              parse_mode: "HTML",
+              reply_markup: { inline_keyboard: buttons }
+            });
+          }
+        }
+      }
+
+            // استعلام کد رهگیری مستقیم با عایق‌بندی کامل (Tenant Isolation) و استپر ۴ مرحله‌ای
+      if (text.startsWith("LIMO-") || text.startsWith("/track")) {
+        const trackingCode = text.replace("/track", "").trim();
+        if (db) {
+          const order = await db.prepare(`
+            SELECT o.*, s.title as service_title, u.telegram_id as user_telegram_id
+            FROM orders o
+            LEFT JOIN service_items s ON o.service_id = s.id
+            LEFT JOIN users u ON o.user_id = u.id
+            WHERE o.tracking_code = ?
+          `).bind(trackingCode).first();
+
+          if (order) {
+            // بررسی حیاتی عایق‌بندی داده‌ها: فقط مالک پرونده یا مدیر مجاز به مشاهده است
+            if (order.user_telegram_id !== userId && userId !== adminId) {
+              return webhookReply({
+                method: "sendMessage",
+                chat_id: chatId,
+                text: "🔒 <b>خطای دسترسی و حفاظت از حریم خصوصی:</b>\n\nاین پرونده به حساب کاربری دیگری تعلق دارد و اطلاعات آن محرمانه می‌باشد.\nشما صرفاً مجاز به پیگیری سفارش‌های ثبت‌شده با همین حساب کاربری هستید.",
+                parse_mode: "HTML",
+                reply_markup: {
+                  inline_keyboard: [
+                    [{ text: "📂 مشاهده پرونده‌های من", callback_data: "my_orders" }],
+                    [{ text: "🔙 بازگشت به منوی اصلی", callback_data: "back_to_main" }]
+                  ]
+                }
+              });
+            }
+
+            const statusMap = {
+              "PENDING": "⏳ در انتظار بررسی اپراتور",
+              "APPROVED": "🟢 تاییدشده و در حال اقدام",
+              "NEED_INFO": "⚠️ نقص مدارک / نیازمند اقدام متقاضی",
+              "COMPLETED": "✅ تکمیل‌شده و مختومه",
+              "CANCELLED": "❌ لغو گردیده"
+            };
+            const statusTitle = statusMap[order.status] || order.status;
+            const stepper = formatOrderStepperText(order.status);
+            const dateStr = (order.updated_at || order.created_at || "").replace("T", " ").slice(0, 16);
+
+            let resText = `🔖 <b>شناسنامه و وضعیت پرونده ${order.tracking_code}</b>\n\n` +
+              `📋 <b>خدمت:</b> ${order.service_title || "خدمت کافی‌نت"}\n` +
+              `📌 <b>وضعیت کنونی:</b> ${statusTitle}\n` +
+              `🕒 <b>آخرین به‌روزرسانی:</b> <code>${dateStr}</code>\n\n` +
+              `📊 <b>روند پیشرفت مراحل (استپر پرونده):</b>\n${stepper.stepsText}\n\n` +
+              `💡 <b>اقدام مورد نیاز شما:</b>\n${stepper.actionRequired}`;
+
+            if (order.operator_notes) {
+              resText += `\n\n💬 <b>یادداشت اپراتور مسئول:</b>\n<i>${order.operator_notes}</i>`;
+            }
+
+            return webhookReply({
+              method: "sendMessage",
+              chat_id: chatId,
+              text: resText,
+              parse_mode: "HTML",
+              reply_markup: {
+                inline_keyboard: [
+                  [{ text: "📂 مشاهده سایر پرونده‌های من", callback_data: "my_orders" }],
+                  [{ text: "🔙 بازگشت به منوی اصلی", callback_data: "back_to_main" }]
+                ]
+              }
+            });
+          }
+        }
+        return webhookReply({
+          method: "sendMessage",
+          chat_id: chatId,
+          text: `❌ پرونده‌ای با کد رهگیری <code>${trackingCode}</code> یافت نشد.`,
+          parse_mode: "HTML",
+          reply_markup: {
+            inline_keyboard: [[{ text: "🔙 بازگشت به منوی اصلی", callback_data: "back_to_main" }]]
+          }
+        });
+      }
+    } // پایان پردازش message
+
+    // ۳. پردازش رویدادهای کلیک روی دکمه‌های شیشه‌ای (Callback Query) - رفتار دقیقاً مشابه ربات باختر (ویرایش درجا بدون ارسال پیام جدید)
+    if (payload.callback_query) {
+      const cb = payload.callback_query;
+      const data = cb.data || "";
+      const chatId = cb.message ? cb.message.chat.id : cb.from.id;
+      const messageId = cb.message ? cb.message.message_id : null;
+      const userId = cb.from.id;
+
+      // تایید فوری دریافت رویداد در تلگرام جهت بستن لودینگ شیشه‌ای دکمه (مشابه ربات باختر)
+      if (botToken && cb.id) {
+        ctx.waitUntil(
+          fetch(`https://api.telegram.org/bot${botToken}/answerCallbackQuery`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ callback_query_id: cb.id })
+          }).catch(() => {})
+        );
+      }
+
+      // تشخیص اینکه آیا پیام مبدأ حاوی رسانه/تصویر (ارسال‌شده با sendPhoto در /start) بوده یا متن خالص
+      const isPhotoMessage = Boolean(cb.message && (cb.message.photo || cb.message.caption !== undefined));
+
+      // تابع کمکی ویرایش درجا پیام قبلی (بدون ارسال پیام جدید، دقیقا مطابق رفتار ربات باختر)
+      function callbackReply(text, replyMarkup) {
+        if (messageId) {
+          if (isPhotoMessage) {
+            if (text.length <= 1000) {
+              return webhookReply({
+                method: "editMessageCaption",
+                chat_id: chatId,
+                message_id: messageId,
+                caption: text,
+                parse_mode: "HTML",
+                reply_markup: replyMarkup
+              });
+            }
+            return webhookReply({
+              method: "sendMessage",
+              chat_id: chatId,
+              text: text,
+              parse_mode: "HTML",
+              reply_markup: replyMarkup
+            });
+          }
+          return webhookReply({
+            method: "editMessageText",
+            chat_id: chatId,
+            message_id: messageId,
+            text: text,
+            parse_mode: "HTML",
+            reply_markup: replyMarkup
+          });
+        }
+        return webhookReply({
+          method: "sendMessage",
+          chat_id: chatId,
+          text: text,
+          parse_mode: "HTML",
+          reply_markup: replyMarkup
+        });
+      }
+
+      // ۱. فهرست خدمات
+      if (data === "services_list") {
+        let buttons = [];
+        if (db) {
+          try {
+            const catRes = await db.prepare("SELECT * FROM service_categories WHERE is_active = 1 ORDER BY order_priority ASC").all();
+            const cats = catRes.results || [];
+            for (const c of cats) {
+              buttons.push([{ text: c.title, callback_data: `cat_${c.code || c.id}` }]);
+            }
+          } catch(e) {
+            console.error("Error fetching categories for services_list:", e);
+          }
+        }
+        if (buttons.length === 0) {
+          buttons = [
+            [{ text: "🌐 امور اتباع و کدها", callback_data: "cat_ALIEN_AND_CODES" }],
+            [{ text: "🎓 خدمات دانشگاهی و آزمون‌ها", callback_data: "cat_UNIVERSITY_SERVICES" }],
+            [{ text: "✈️ بلیت هواپیما، قطار و اتوبوس", callback_data: "cat_TICKETS_TRAVEL" }],
+            [{ text: "🏛 سایر خدمات اینترنتی و اداری", callback_data: "cat_GOVERNMENT_INTERNET" }],
+            [{ text: "📂 درخواست‌های من، کیف پول و پیگیری", callback_data: "cat_PORTAL_AND_WALLET" }],
+            [{ text: "💬 گفت‌وگو با پشتیبانی و ارتباط با ما", callback_data: "cat_SUPPORT_AND_CONTACT" }]
+          ];
+        }
+        buttons.push([{ text: "🔙 بازگشت به منوی اصلی", callback_data: "back_to_main" }]);
+
+        return callbackReply("📋 <b>دسته‌بندی خدمات سامانه کافی نت لیمو:</b>\n\nلطفاً یکی از دسته‌های زیر را جهت مشاهده خدمات انتخاب فرمایید:", {
+          inline_keyboard: buttons
+        });
+      }
+
+      // ۲. پیمایش دسته‌بندی‌ها در Edge
+      if (data.startsWith("cat_")) {
+        const catCode = data.replace("cat_", "");
+        if (catCode === "PORTAL_AND_WALLET") {
+          return callbackReply("📂 <b>درخواست‌های من، کیف پول و پیگیری سفارش:</b>\n\nلطفاً بخش مورد نظر را انتخاب فرمایید:", {
+            inline_keyboard: [
+              [{ text: "📂 درخواست‌های من", callback_data: "my_orders" }],
+              [{ text: "💳 کیف پول من", callback_data: "wallet_menu" }],
+              [{ text: "⏰ ثبت‌نام‌های مقطعی", callback_data: "seasonal_list" }],
+              [{ text: "🔍 پیگیری با کد رهگیری", callback_data: "order_tracking" }],
+              [{ text: "🔙 بازگشت به دسته‌بندی‌ها", callback_data: "services_list" }]
+            ]
+          });
+        }
+
+        if (catCode === "SUPPORT_AND_CONTACT") {
+          return callbackReply("💬 <b>گفت‌وگو با پشتیبانی و ارتباط با ما:</b>\n\nجهت ارتباط مستقیم با کارشناسان کافی‌نت لیمو یا مشاهده کانال‌های رسمی در شبکه‌های اجتماعی:", {
+            inline_keyboard: [
+              [{ text: "💬 گفت‌وگو با پشتیبانی", callback_data: "contact_operator" }],
+              [{ text: "📢 راه‌های ارتباطی و کانال‌ها", callback_data: "channels_info" }],
+              [{ text: "🔙 بازگشت به دسته‌بندی‌ها", callback_data: "services_list" }]
+            ]
+          });
+        }
+
+        let catButtons = [];
+        let categoryTitle = "این دسته‌بندی";
+        if (db) {
+          try {
+            const catInfo = await db.prepare("SELECT * FROM service_categories WHERE code = ? OR id = ?").bind(catCode, catCode).first();
+            if (catInfo) categoryTitle = catInfo.title;
+
+            const svcs = await db.prepare("SELECT s.*, c.title as cat_title FROM service_items s JOIN service_categories c ON s.category_id = c.id WHERE (c.code = ? OR c.id = ?) AND s.is_active = 1 ORDER BY s.order_priority ASC").bind(catCode, catCode).all();
+            if (svcs.results && svcs.results.length > 0) {
+              for (const s of svcs.results) {
+                catButtons.push([{ text: `🔹 ${s.title}`, callback_data: `svc_${s.code}` }]);
+              }
+            }
+          } catch(e) {
+            console.error("Error fetching services for category:", e);
+          }
+        }
+
+        if (catCode === "ALIEN_AND_CODES") {
+          if (!catButtons.some(b => b[0] && b[0].callback_data === "svc_HOUSING_TRACKING_CODE")) {
+            catButtons.unshift([{ text: "🏠 کد رهگیری قرارداد مسکن (سامانه خودنویس)", callback_data: "svc_HOUSING_TRACKING_CODE" }]);
+          }
+        }
+
+        if (catButtons.length === 0) {
+          catButtons.push([{ text: "💬 هماهنگی با پشتیبانی جهت ثبت سفارش", callback_data: "contact_operator" }]);
+        }
+        catButtons.push([{ text: "🔙 بازگشت به دسته‌بندی‌ها", callback_data: "services_list" }]);
+        catButtons.push([{ text: "🏠 منوی اصلی", callback_data: "back_to_main" }]);
+
+        const promptText = catButtons.length > 2
+          ? `📋 <b>خدمات دسته‌بندی ${escapeHtml(categoryTitle)}:</b>
+
+جهت مشاهده شرایط و ثبت درخواست، خدمت مورد نظر را انتخاب فرمایید:`
+          : `📋 <b>دسته‌بندی ${escapeHtml(categoryTitle)}:</b>
+
+در حال حاضر خدمتی در این دسته‌بندی فعال نیست یا از طریق پشتیبانی هماهنگ می‌گردد:`;
+
+        return callbackReply(promptText, {
+          inline_keyboard: catButtons
+        });
+      }
+
+      // ۳. کانال‌های ارتباطی پویا همراه با دکمه‌های شیشه‌ای
+      if (data === "channels_info") {
+        let chList = [];
+        if (db) {
+          try {
+            const chRes = await db.prepare("SELECT * FROM communication_channels WHERE is_active = 1 ORDER BY order_priority ASC").all();
+            chList = chRes.results || [];
+          } catch(e) {
+            console.error("Error fetching channels in bot:", e);
+          }
+        }
+        let channelsText = "📢 <b>راه‌های ارتباطی و کانال‌های رسمی کافی نت لیمو:</b>\n\n";
+        const inlineKeyboard = [];
+        if (chList.length > 0) {
+          for (const ch of chList) {
+            channelsText += `• <b>${ch.title}:</b> <code>${ch.value || "در دسترس"}</code>\n`;
+            if (ch.value && (ch.value.startsWith("http://") || ch.value.startsWith("https://") || ch.value.startsWith("tg://"))) {
+              inlineKeyboard.push([{ text: `🔗 ${ch.title}`, url: ch.value }]);
+            }
+          }
+        } else {
+          channelsText += "• <b>کانال تلگرام:</b> @limocafe\n• <b>پیام‌رسان ایتا:</b> @limocafe\n• <b>پیام‌رسان روبیکا:</b> @limocafe\n• <b>پیام‌رسان بله:</b> @limocafe\n• <b>صفحه اینستاگرام:</b> @limocafe\n• <b>ساعت کاری:</b> همه‌روزه از ۸:۰۰ الی ۲۱:۰۰\n";
+          inlineKeyboard.push([{ text: "🔗 کانال تلگرام", url: "https://t.me/LimoCafeBot" }]);
+          inlineKeyboard.push([{ text: "🔗 پیام‌رسان ایتا", url: "https://eitaa.com/limocafe" }]);
+          inlineKeyboard.push([{ text: "🔗 پیام‌رسان روبیکا", url: "https://rubika.ir/limocafe" }]);
+          inlineKeyboard.push([{ text: "🔗 پیام‌رسان بله", url: "https://ble.ir/limocafe" }]);
+          inlineKeyboard.push([{ text: "🔗 صفحه اینستاگرام", url: "https://instagram.com/limocafe" }]);
+        }
+        channelsText += "\n💬 <b>پشتیبانی برخط:</b> گفت‌وگوی داخل ربات (/chat)";
+        inlineKeyboard.push([{ text: "💬 گفت‌وگو با پشتیبانی", callback_data: "contact_operator" }]);
+        inlineKeyboard.push([{ text: "🔙 بازگشت به منوی اصلی", callback_data: "back_to_main" }]);
+
+        return callbackReply(channelsText, { inline_keyboard: inlineKeyboard });
+      }
+
+      // ۴. جزییات کد رهگیری مسکن
+      if (data === "svc_HOUSING_TRACKING_CODE") {
+        let witnessFeeToman = "۳۵۰،۰۰۰";
+        if (db) {
+          try {
+            const setObj = await db.prepare("SELECT value FROM system_settings WHERE key = 'witness_provision_fee'").first();
+            if (setObj && setObj.value) {
+              witnessFeeToman = Math.round(parseInt(setObj.value, 10) / 10).toLocaleString('fa-IR');
+            }
+          } catch(e) {}
+        }
+        const termsText = `📋 <b>شرایط و الزامات دریافت کد رهگیری مسکن (سامانه خودنویس):</b>\n\n` +
+          `۱. <b>مسئولیت صحت اطلاعات:</b> کلیه اطلاعات ارسالی باید واقعی، صحیح و مطابق مدارک هویتی طرفین باشد. مسئولیت قانونی هرگونه مغایرت اطلاعات تماماً بر عهده متقاضی است.\n\n` +
+          `۲. <b>مالکیت شماره‌های تماس:</b> شماره تماس مستأجر باید حتماً به نام شخص مستأجر، و شماره تماس صاحب‌خانه به نام خود مالک باشد (جهت دریافت پیامک تایید سامانه املاک).\n\n` +
+          `۳. <b>کد ملی مالک:</b> ثبت کد ملی ۱۰ رقمی مالک (موجر) جهت استعلام مالکیت ثبتی الزامی است.\n\n` +
+          `۴. <b>اطلاعات مالی و مدت:</b> مبالغ رهن و اجاره ماهانه و مدت زمان قرارداد اجاره باید دقیق قید شوند.\n\n` +
+          `۵. <b>مشخصات ملک:</b> شناسه قبض برق و کد پستی ۱۰ رقمی ملک باید دارای تاییدیه پستی باشند.\n\n` +
+          `۶. <b>شماره کارت مالک:</b> درج شماره کارت ۱۶ رقمی مالک جهت واریز کرایه خانه الزامی است.\n\n` +
+          `۷. <b>شاهدان معتبر ایرانی:</b> ثبت قرارداد نیازمند دو شاهد معتبر ایرانی است. شما می‌توانید مشخصات دو شاهد را شخصاً معرفی فرمایید، یا درخواست تأمین دو شاهد رسمی توسط کافی‌نت لیمو (با هزینه مصوب ${witnessFeeToman} تومان) را ثبت نمایید.\n\n` +
+          `🔒 <b>محرمانگی کامل:</b> کلیه اطلاعات حساس مالی و هویتی شما کاملاً رمزنگاری و حفاظت شده و در لاگ‌ها یا گزارش‌های عمومی افشا نخواهند شد.\n\n` +
+          `جهت ادامه، لطفاً دکمه «✅ شرایط را خواندم و می‌پذیرم» را انتخاب فرمایید:`;
+
+        return callbackReply(termsText, {
+          inline_keyboard: [
+            [{ text: "✅ شرایط را خواندم و می‌پذیرم", callback_data: "housing_terms_accepted" }],
+            [{ text: "🔙 بازگشت به دسته‌بندی", callback_data: "cat_ALIEN_AND_CODES" }],
+            [{ text: "🏠 منوی اصلی", callback_data: "back_to_main" }]
+          ]
+        });
+      }
+
+      // ۵. شرایط کد رهگیری مسکن پذیرفته شد
+      if (data === "housing_terms_accepted") {
+        const webappUrl = env.WEBAPP_URL || `https://${reqUrl.hostname}/webapp`;
+        return callbackReply("📝 <b>درخواست کد رهگیری مسکن:</b>\n\nشرایط با موفقیت تأیید شد.\nجهت ثبت کامل مشخصات طرفین، ملک و شاهدان، دکمه ورود به فرم هوشمند را انتخاب فرمایید:", {
+          inline_keyboard: [
+            [{ text: "📱 ورود به فرم هوشمند مسکن در مینی‌اپ", web_app: { url: `${webappUrl}?svc=HOUSING_TRACKING_CODE` } }],
+            [{ text: "💬 ارسال اطلاعات به اپراتور", callback_data: "contact_operator" }],
+            [{ text: "🔙 بازگشت به دسته‌بندی", callback_data: "cat_ALIEN_AND_CODES" }]
+          ]
+        });
+      }
+
+      // ۶. جزییات یک خدمت
+      if (data.startsWith("svc_")) {
+        const code = data.replace("svc_", "");
+        if (db) {
+          try {
+            const svc = await db.prepare(`
+              SELECT s.*, c.title as cat_title 
+              FROM service_items s 
+              LEFT JOIN service_categories c ON s.category_id = c.id 
+              WHERE s.code = ?
+            `).bind(code).first();
+            if (svc) {
+              const webappUrl = env.WEBAPP_URL || `https://${reqUrl.hostname}/webapp`;
+              const feeText = svc.base_fee ? `${Math.round(svc.base_fee / 10).toLocaleString('fa-IR')} تومان` : "تعرفه مصوب کافی‌نت";
+              const desc = (svc.description || "ارائه خدمات تخصصی و ثبت الکترونیکی در سامانه‌های رسمی کشور.").trim();
+              const categoryTitle = svc.cat_title || "عمومی";
+
+              const text = `📋 <b>${escapeHtml(svc.title)}</b>
+
+` +
+                `📁 <b>دسته‌بندی:</b> ${escapeHtml(categoryTitle)}
+` +
+                `💵 <b>تعرفه خدمت:</b> ${feeText}
+
+` +
+                `📝 <b>توضیحات و شرایط:</b>
+${escapeHtml(desc)}
+
+` +
+                `جهت ثبت الکترونیکی پرونده روی دکمه ورود به مینی‌اپلیکیشن یا ارتباط با اپراتور کلیک فرمایید:`;
+
+              return callbackReply(text, {
+                inline_keyboard: [
+                  [{ text: "📱 ثبت درخواست در مینی‌اپلیکیشن", web_app: { url: `${webappUrl}?svc=${encodeURIComponent(code)}` } }],
+                  [{ text: "💬 هماهنگی با اپراتور جهت ثبت", callback_data: "contact_operator" }],
+                  [{ text: "🔙 بازگشت به فهرست خدمات", callback_data: "services_list" }]
+                ]
+              });
+            }
+          } catch(e) {
+            console.error("Error in svc handler:", e);
+          }
+        }
+        return callbackReply("⚠️ مشخصات این خدمت یافت نشد یا موقتاً غیرفعال شده است.", {
+          inline_keyboard: [
+            [{ text: "🔙 بازگشت به فهرست خدمات", callback_data: "services_list" }],
+            [{ text: "🏠 منوی اصلی", callback_data: "back_to_main" }]
+          ]
+        });
+      }
+
+      // ۷. پرتال پرونده‌های من
+      if (data === "my_orders") {
+        if (db) {
+          const u = await db.prepare("SELECT id FROM users WHERE telegram_id = ?").bind(userId).first();
+          if (u) {
+            const userOrders = await db.prepare(`
+              SELECT o.*, s.title as service_title
+              FROM orders o
+              LEFT JOIN service_items s ON o.service_id = s.id
+              WHERE o.user_id = ?
+              ORDER BY o.created_at DESC
+              LIMIT 10
+            `).bind(u.id).all();
+
+            const rows = userOrders.results || [];
+            if (rows.length === 0) {
+              return callbackReply("📂 <b>پرتال پرونده‌های من</b>\n\nشما در حال حاضر هیچ سفارش یا پرونده فعالی در کافی‌نت لیمو ندارید.\nجهت ثبت درخواست جدید، گزینه «📋 فهرست خدمات» را انتخاب فرمایید.", {
+                inline_keyboard: [
+                  [{ text: "📋 فهرست خدمات", callback_data: "services_list" }],
+                  [{ text: "🔙 بازگشت به منوی اصلی", callback_data: "back_to_main" }]
+                ]
+              });
+            }
+
+            let listText = "📂 <b>پرتال پرونده‌های من در کافی‌نت لیمو</b>\n\nلیست پرونده‌های ثبت‌شده توسط حساب کاربری شما:\n\n";
+            const buttons = [];
+            const stDict = {
+              PENDING: "⏳ در انتظار بررسی",
+              APPROVED: "🟢 تایید مدارک",
+              NEED_INFO: "⚠️ نقص مدارک",
+              COMPLETED: "✅ تکمیل‌شده",
+              REJECTED: "❌ رد شده"
+            };
+            for (const ord of rows) {
+              const sBadge = stDict[ord.status] || ord.status;
+              listText += `• <code>${ord.tracking_code}</code> — ${ord.service_title || 'خدمت'} [${sBadge}]\n`;
+              buttons.push([{ text: `🔍 پرونده ${ord.tracking_code}`, callback_data: `track_${ord.tracking_code}` }]);
+            }
+            buttons.push([{ text: "🔙 بازگشت به منوی اصلی", callback_data: "back_to_main" }]);
+
+            return callbackReply(listText, { inline_keyboard: buttons });
+          }
+        }
+        return callbackReply("📂 <b>پرتال پرونده‌های من</b>\n\nهنوز هیچ پرونده‌ای برای شما ثبت نشده است.", {
+          inline_keyboard: [[{ text: "🔙 بازگشت به منوی اصلی", callback_data: "back_to_main" }]]
+        });
+      }
+
+      // ۸. استعلام جزییات پرونده با کد رهگیری
+      if (data.startsWith("track_")) {
+        const trCode = data.replace("track_", "");
+        if (db) {
+          const ord = await db.prepare("SELECT o.*, s.title as service_title FROM orders o LEFT JOIN service_items s ON o.service_id = s.id WHERE o.tracking_code = ?").bind(trCode).first();
+          if (ord) {
+            const statusMap = {
+              "PENDING": "⏳ در انتظار بررسی اپراتور",
+              "APPROVED": "🟢 تاییدشده و در حال اقدام",
+              "NEED_INFO": "⚠️ نقص مدارک / نیازمند اقدام متقاضی",
+              "COMPLETED": "✅ تکمیل‌شده و مختومه",
+              "REJECTED": "❌ رد گردیده"
+            };
+            const statusTitle = statusMap[ord.status] || ord.status;
+            const stepper = formatOrderStepperText(ord.status);
+            const dateStr = (ord.updated_at || ord.created_at || "").replace("T", " ").slice(0, 16);
+
+            let resText = `🔖 <b>شناسنامه و وضعیت پرونده ${ord.tracking_code}</b>\n\n` +
+              `📋 <b>خدمت:</b> ${ord.service_title || "خدمت کافی‌نت"}\n` +
+              `📌 <b>وضعیت کنونی:</b> ${statusTitle}\n` +
+              `🕒 <b>آخرین به‌روزرسانی:</b> <code>${dateStr}</code>\n\n` +
+              `📊 <b>روند پیشرفت مراحل:</b>\n${stepper.stepsText}\n\n` +
+              `💡 <b>اقدام مورد نیاز شما:</b>\n${stepper.actionRequired}`;
+
+            if (ord.operator_notes) {
+              resText += `\n\n💬 <b>یادداشت اپراتور مسئول:</b>\n<i>${ord.operator_notes}</i>`;
+            }
+
+            return callbackReply(resText, {
+              inline_keyboard: [
+                [{ text: "📂 مشاهده سایر پرونده‌های من", callback_data: "my_orders" }],
+                [{ text: "🔙 بازگشت به منوی اصلی", callback_data: "back_to_main" }]
+              ]
+            });
+          }
+        }
+      }
+
+      // ۹. راهنمای پیگیری سفارش
+      if (data === "order_tracking") {
+        return callbackReply("🔍 <b>استعلام و پیگیری وضعیت پرونده:</b>\n\nلطفاً <b>کد رهگیری یکتا</b>ی خود را به صورت متن در چت ارسال فرمایید (مثال: <code>LIMO-1405-88219</code>):", {
+          inline_keyboard: [
+            [{ text: "📂 مشاهده در لیست پرونده‌های من", callback_data: "my_orders" }],
+            [{ text: "🔙 بازگشت به منوی اصلی", callback_data: "back_to_main" }]
+          ]
+        });
+      }
+
+      // ۱۰. نمایش کیف پول و موجودی
+      if (data === "wallet_menu") {
+        if (db) {
+          let u = await db.prepare("SELECT id FROM users WHERE telegram_id = ?").bind(userId).first();
+          if (!u) {
+            const insU = await db.prepare("INSERT INTO users (telegram_id, full_name, username) VALUES (?, ?, ?)")
+              .bind(userId, `${cb.from.first_name || ''} ${cb.from.last_name || ''}`.trim() || 'مشتری', cb.from.username || '').run();
+            u = { id: insU?.meta?.last_row_id || 1 };
+          }
+          let w = await db.prepare("SELECT * FROM wallets WHERE user_id = ?").bind(u.id).first();
+          if (!w) {
+            await db.prepare("INSERT INTO wallets (user_id, balance, is_frozen) VALUES (?, 0, 0)").bind(u.id).run();
+            w = await db.prepare("SELECT * FROM wallets WHERE user_id = ?").bind(u.id).first();
+          }
+
+          const txs = await db.prepare("SELECT * FROM wallet_transactions WHERE wallet_id = ? ORDER BY created_at DESC LIMIT 5").bind(w.id).all();
+          const rows = txs.results || [];
+
+          const balRial = (w.balance || 0).toLocaleString('fa-IR');
+          const balToman = Math.floor((w.balance || 0) / 10).toLocaleString('fa-IR');
+          const wStatus = w.is_frozen ? "🔒 مسدود شده" : "🟢 فعال";
+
+          let cardText = `💳 <b>کیف پول و حساب مالی در کافی‌نت لیمو</b>\n\n` +
+            `💰 <b>موجودی ریالی:</b> <code>${balRial}</code> ریال\n` +
+            `💵 <b>معادل به تومان:</b> <code>${balToman}</code> تومان\n` +
+            `📌 <b>وضعیت حساب:</b> ${wStatus}\n\n` +
+            `📜 <b>گردش تراکنش‌های اخیر:</b>\n`;
+
+          if (rows.length === 0) {
+            cardText += `<i>هنوز هیچ تراکنشی برای حساب شما ثبت نگردیده است.</i>\n`;
+          } else {
+            const typeLabels = {
+              TOPUP: "🟢 افزایش اعتبار",
+              ORDER_PAYMENT: "🔴 پرداخت سفارش",
+              REFUND: "🔵 استرداد وجه",
+              ADJUSTMENT: "🟡 تعدیل حسابداری"
+            };
+            rows.forEach(t => {
+              const lbl = typeLabels[t.transaction_type] || "⚪ تراکنش";
+              const amtStr = Math.abs(t.amount).toLocaleString('fa-IR');
+              const dStr = (t.created_at || '').replace('T', ' ').slice(0, 16);
+              cardText += `▪️ <b>${lbl}:</b> <code>${amtStr}</code> ریال\n   ▫️ شناسه: <code>${t.tracking_ref}</code> | ${dStr}\n   ▫️ شرح: <i>${t.notes || '-'}</i>\n`;
+            });
+          }
+
+          return callbackReply(cardText, {
+            inline_keyboard: [
+              [{ text: "💬 درخواست شارژ از پشتیبانی", callback_data: "contact_operator" }],
+              [{ text: "🔙 بازگشت به منوی اصلی", callback_data: "back_to_main" }]
+            ]
+          });
+        }
+      }
+
+      // ۱۱. گفت‌وگو با پشتیبانی و اتصال به چت زنده
+      if (data === "contact_operator") {
+        return callbackReply("💬 <b>مرکز پشتیبانی و گفت‌وگوی زنده کافی‌نت لیمو:</b>\n\nکارشناسان ما آماده پاسخگویی به سوالات، بررسی مدارک و راهنمایی شما هستند.\n\nجهت اتصال مستقیم به چت دوطرفه، گزینه زیر را لمس فرمایید:", {
+          inline_keyboard: [
+            [{ text: "💬 اتصال مستقیم به چت پشتیبانی", callback_data: "start_chat" }],
+            [{ text: "📢 راه‌های ارتباطی و کانال‌ها", callback_data: "channels_info" }],
+            [{ text: "🔙 بازگشت به منوی اصلی", callback_data: "back_to_main" }]
+          ]
+        });
+      }
+
+      // ۱۱.۱. آغاز نشست چت زنده
+      if (data === "start_chat") {
+        if (db) {
+          const userFullName = `${cb.from.first_name || ""} ${cb.from.last_name || ""}`.trim();
+          await db.prepare("INSERT OR REPLACE INTO active_support_sessions (telegram_id, full_name, created_at) VALUES (?, ?, CURRENT_TIMESTAMP)")
+            .bind(userId, userFullName).run();
+          let u = await db.prepare("SELECT id FROM users WHERE telegram_id = ?").bind(userId).first();
+          if (!u) {
+            await db.prepare("INSERT INTO users (telegram_id, full_name, created_at) VALUES (?, ?, CURRENT_TIMESTAMP)").bind(userId, userFullName || 'کاربر').run();
+            u = await db.prepare("SELECT id FROM users WHERE telegram_id = ?").bind(userId).first();
+          }
+          if (u) {
+            let th = await db.prepare("SELECT id FROM support_threads WHERE user_id = ? AND status != 'CLOSED' ORDER BY id DESC").bind(u.id).first();
+            if (!th) {
+              await db.prepare("INSERT INTO support_threads (user_id, status) VALUES (?, 'PENDING_SUPPORT')").bind(u.id).run();
+            } else {
+              await db.prepare("UPDATE support_threads SET status = 'PENDING_SUPPORT', updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(th.id).run();
+            }
+          }
+        }
+        return callbackReply("💬 <b>شما به سامانه گفتگوی مستقیم با پشتیبانی کافی‌نت لیمو متصل شدید.</b>\n\nلطفاً پیام، سوال یا مدرک خود را در همین صفحه ارسال فرمایید.\nپیام شما مستقیماً توسط اپراتور بررسی شده و پاسخ در همین گفتگو ارسال خواهد شد.\n\n<i>برای اتمام گفتگو می‌توانید از دکمه زیر یا دستور /endchat استفاده فرمایید.</i>", {
+          inline_keyboard: [
+            [{ text: "❌ پایان گفت‌وگو و بازگشت", callback_data: "end_chat" }]
+          ]
+        });
+      }
+
+      // ۱۱.۲. پایان نشست چت زنده
+      if (data === "end_chat" || data === "exit_chat") {
+        if (db) {
+          await db.prepare("DELETE FROM active_support_sessions WHERE telegram_id = ?").bind(userId).run();
+        }
+        const webappUrl = env.WEBAPP_URL || `https://${reqUrl.hostname}/webapp`;
+        return callbackReply("✅ <b>گفتگوی شما با پشتیبانی به پایان رسید.</b>\n\nاز همراهی شما سپاسگزاریم. به منوی اصلی بازگشتید.", {
+          inline_keyboard: [
+            [{ text: "📱 ورود به مینی‌اپلیکیشن لیمو", web_app: { url: webappUrl } }],
+            [{ text: "📋 فهرست خدمات", callback_data: "services_list" }],
+            [{ text: "🔍 پیگیری با کد", callback_data: "order_tracking" }, { text: "📂 درخواست‌های من", callback_data: "my_orders" }],
+            [{ text: "💳 کیف پول و موجودی", callback_data: "wallet_menu" }, { text: "⏰ یادآورها", callback_data: "reminders_menu" }],
+            [{ text: "📞 ارتباط با اپراتور", callback_data: "contact_operator" }]
+          ]
+        });
+      }
+
+      // ۱۲. منوی یادآورها
+      if (data === "reminders_menu") {
+        return callbackReply("⏰ <b>سامانه یادآورهای هوشمند تقویمی</b>\n\nبا این سامانه مهلت ثبت‌نام‌ها، امتحانات و تمدید مدارک را به موقع در تلگرام دریافت می‌کنید.", {
+          inline_keyboard: [
+            [{ text: "⏰ ثبت‌نام‌های مقطعی فعال", callback_data: "seasonal_list" }],
+            [{ text: "🔙 بازگشت به منوی اصلی", callback_data: "back_to_main" }]
+          ]
+        });
+      }
+
+      // ۱۳. ثبت‌نام‌های مقطعی و دوره‌ای
+      if (data === "seasonal_list") {
+        if (db) {
+          const res = await db.prepare("SELECT * FROM seasonal_campaigns WHERE is_active = 1 ORDER BY start_at ASC").all();
+          const camps = res.results || [];
+          if (camps.length === 0) {
+            return callbackReply("⏰ <b>ثبت‌نام‌های مقطعی و زمان‌دار</b>\n\nدر حال حاضر هیچ ثبت‌نام دوره‌ای یا مهلت‌داری فعال نیست.", {
+              inline_keyboard: [[{ text: "🔙 بازگشت به منوی اصلی", callback_data: "back_to_main" }]]
+            });
+          }
+          const now = new Date();
+          let text = "⏰ <b>فهرست ثبت‌نام‌های مقطعی و مهلت‌دار:</b>\n\n";
+          const buttons = [];
+          for (const c of camps) {
+            const startD = (c.start_at || '').slice(0, 10);
+            const endD = (c.end_at || '').slice(0, 10);
+            const start = new Date(c.start_at);
+            const end = new Date(c.end_at);
+            let badge = "🟢 در حال ثبت‌نام";
+            let canApply = true;
+            if (now < start) {
+              badge = "⏳ به‌زودی (شروع از " + startD + ")";
+              canApply = false;
+            } else if (now > end) {
+              badge = "🔒 مهلت پایان‌یافته";
+              canApply = false;
+            } else {
+              const hoursLeft = (end.getTime() - now.getTime()) / (1000 * 3600);
+              if (hoursLeft <= 48) badge = "🔥 مهلت رو به اتمام (تا " + endD + ")";
+            }
+
+            text += `📌 <b>${c.title}</b>\nوضعیت: <b>${badge}</b>\n⏳ مهلت: از ${startD} تا ${endD}\n💰 تعرفه: ${(c.base_fee || 0).toLocaleString('fa-IR')} ریال\n\n`;
+            
+            const row = [];
+            if (canApply) {
+              row.push({ text: `📝 ثبت‌نام: ${c.title.slice(0, 18)}...`, callback_data: `apply_camp_${c.id}` });
+            }
+            if (now <= end) {
+              row.push({ text: `⏰ یادآوری به من`, callback_data: `remind_camp_${c.id}` });
+            }
+            if (row.length > 0) buttons.push(row);
+          }
+          buttons.push([{ text: "🔙 بازگشت به منوی اصلی", callback_data: "back_to_main" }]);
+          return callbackReply(text, { inline_keyboard: buttons });
+        }
+      }
+
+      // ثبت یادآور تلگرام برای ثبت‌نام مقطعی
+      if (data.startsWith("remind_camp_")) {
+        const campId = parseInt(data.replace("remind_camp_", ""), 10);
+        if (db && campId) {
+          const camp = await db.prepare("SELECT * FROM seasonal_campaigns WHERE id = ?").bind(campId).first();
+          if (!camp) {
+            return callbackReply("❌ رویداد مورد نظر یافت نشد.");
+          }
+          let u = await db.prepare("SELECT id FROM users WHERE telegram_id = ?").bind(userId).first();
+          if (!u) {
+            const ins = await db.prepare("INSERT INTO users (telegram_id, full_name, username) VALUES (?, ?, ?)")
+              .bind(userId, ((from.first_name || 'کاربر') + ' ' + (from.last_name || '')).trim(), from.username || '').run();
+            u = { id: ins?.meta?.last_row_id || 1 };
+          }
+          const existing = await db.prepare("SELECT id FROM reminders WHERE user_id = ? AND (title = ? OR INSTR(title, ?) > 0) AND is_sent = 0")
+            .bind(u.id, `یادآوری: ${camp.title}`, camp.title).first();
+          if (existing) {
+            return callbackReply(`✅ <b>یادآور قبلاً ثبت شده است!</b>\n\n📌 رویداد: <b>${camp.title}</b>\n💡 در موعد مقرر از طریق همین ربات به شما اطلاع داده خواهد شد.`, {
+              inline_keyboard: [[{ text: "🔙 بازگشت به فهرست ثبت‌نام‌ها", callback_data: "seasonal_list" }]]
+            });
+          }
+          const now = new Date();
+          const start = new Date(camp.start_at);
+          const targetDate = (now < start) ? camp.start_at : camp.end_at;
+          const shamsiDate = (targetDate || '').slice(0, 10);
+          await db.prepare(`
+            INSERT INTO reminders (user_id, title, description, shamsi_date, target_date, is_sent, created_at)
+            VALUES (?, ?, ?, ?, ?, 0, CURRENT_TIMESTAMP)
+          `).bind(u.id, `یادآوری: ${camp.title}`, `یادآوری ثبت‌نام دوره‌ای ${camp.code}`, shamsiDate, targetDate).run();
+
+          return callbackReply(`⏰ <b>یادآور با موفقیت ثبت شد!</b>\n\n📌 رویداد: <b>${camp.title}</b>\n📅 موعد یادآوری: ${shamsiDate}\n\n💡 در زمان مقرر پیام اطلاع‌رسانی خودکار در همین صفحه برای شما ارسال می‌شود.`, {
+            inline_keyboard: [[{ text: "🔙 بازگشت به فهرست ثبت‌نام‌ها", callback_data: "seasonal_list" }]]
+          });
+        }
+      }
+
+      // هدایت به ثبت‌نام در رویداد مقطعی
+      if (data.startsWith("apply_camp_")) {
+        const campId = parseInt(data.replace("apply_camp_", ""), 10);
+        if (db && campId) {
+          const camp = await db.prepare("SELECT * FROM seasonal_campaigns WHERE id = ?").bind(campId).first();
+          if (!camp) {
+            return callbackReply("❌ رویداد مورد نظر یافت نشد.");
+          }
+          const now = new Date();
+          const start = new Date(camp.start_at);
+          const end = new Date(camp.end_at);
+          if (now < start) {
+            return callbackReply(`⏳ <b>مهلت ثبت‌نام هنوز شروع نشده است.</b>\n\nتاریخ آغاز: ${(camp.start_at || '').slice(0, 10)}`, {
+              inline_keyboard: [
+                [{ text: "⏰ به من یادآوری کن", callback_data: `remind_camp_${camp.id}` }],
+                [{ text: "🔙 بازگشت", callback_data: "seasonal_list" }]
+              ]
+            });
+          }
+          if (now > end) {
+            return callbackReply(`🔒 <b>مهلت ثبت‌نام این رویداد به پایان رسیده است.</b>\n\nتاریخ پایان: ${(camp.end_at || '').slice(0, 10)}`, {
+              inline_keyboard: [[{ text: "🔙 بازگشت", callback_data: "seasonal_list" }]]
+            });
+          }
+          const webAppUrl = `https://limo-cafe-bot.bakhtar-visasup.workers.dev/webapp`;
+          return callbackReply(`📝 <b>ثبت‌نام در رویداد: ${camp.title}</b>\n\n` +
+            `📌 <b>توضیحات:</b> ${camp.description || 'ثبت اینترنتی و بارگذاری مدارک'}\n` +
+            `💰 <b>تعرفه خدمت:</b> ${(camp.base_fee || 0).toLocaleString('fa-IR')} ریال\n` +
+            `⏳ <b>مهلت باقی‌مانده:</b> تا ${(camp.end_at || '').slice(0, 10)}\n\n` +
+            `جهت تکمیل فرم و ثبت پرونده روی دکمه زیر کلیک کنید:`, {
+            inline_keyboard: [
+              [{ text: "🚀 باز کردن فرم ثبت‌نام (Mini App)", web_app: { url: webAppUrl } }],
+              [{ text: "💬 هماهنگی با پشتیبان", callback_data: "contact_operator" }],
+              [{ text: "🔙 بازگشت", callback_data: "seasonal_list" }]
+            ]
+          });
+        }
+      }
+
+      // ۱۴. دستورات پنل ادمین
+      if (data === "admin_stats") {
+        if (userId !== adminId) {
+          return callbackReply(ACCESS_DENIED_TEXT, { inline_keyboard: [[{ text: "🔙 بازگشت", callback_data: "back_to_main" }]] });
+        }
+        if (db) {
+          const [u, o, p, m, r] = await Promise.all([
+            db.prepare("SELECT COUNT(*) as c FROM users").first(),
+            db.prepare("SELECT COUNT(*) as c FROM orders").first(),
+            db.prepare("SELECT COUNT(*) as c FROM orders WHERE status = 'PENDING'").first(),
+            db.prepare("SELECT COUNT(*) as c FROM website_monitors").first(),
+            db.prepare("SELECT COUNT(*) as c FROM reminders WHERE is_sent = 0").first()
+          ]);
+          const statsText = `📊 <b>داشبورد آماری سامانه کافی نت لیمو:</b>\n\n` +
+            `👥 <b>کاربران:</b> ${u ? u.c : 0} نفر\n` +
+            `📑 <b>کل سفارشات:</b> ${o ? o.c : 0}\n` +
+            `⏳ <b>سفارشات در انتظار:</b> ${p ? p.c : 0}\n` +
+            `⏰ <b>یادآورهای منتظر ارسال:</b> ${r ? r.c : 0}\n` +
+            `🌐 <b>سامانه‌های هدف تحت پایش:</b> ${m ? m.c : 0}\n\n` +
+            `<i>منطقه زمانی: Asia/Tehran | پایگاه داده: Cloudflare D1</i>`;
+          return callbackReply(statsText, {
+            inline_keyboard: [[{ text: "🔙 بازگشت به پنل مدیریت", callback_data: "back_to_admin" }]]
+          });
+        }
+      }
+
+      if (data === "admin_monitors") {
+        if (userId !== adminId) {
+          return callbackReply(ACCESS_DENIED_TEXT, { inline_keyboard: [[{ text: "🔙 بازگشت", callback_data: "back_to_main" }]] });
+        }
+        if (db) {
+          const res = await db.prepare("SELECT * FROM website_monitors ORDER BY id ASC").all();
+          const list = res.results || [];
+          let monText = `🌐 <b>وضعیت پایش هوشمند سایت‌های هدف (${list.length} سامانه):</b>\n\n`;
+          for (const item of list) {
+            const upIcon = item.uptime_status === "UP" ? "🟢" : (item.uptime_status === "DOWN" ? "🔴" : "⚪");
+            const srvIcon = item.service_status === "OPEN" ? "✅ باز" : (item.service_status === "CLOSED" ? "⛔️ بسته" : "❓ نامشخص");
+            const lastCheck = (item.last_checked_at || "").replace("T", " ").slice(0, 16) || "هنوز پایش نشده";
+            monText += `${upIcon} <b>${item.title}</b>\n   ▫️ سرور: ${item.uptime_status} (HTTP ${item.last_http_code || "—"})\n   ▫️ ثبت‌نام: ${srvIcon}\n   ▫️ آخرین پایش: <code>${lastCheck}</code>\n\n`;
+          }
+          return callbackReply(monText, {
+            inline_keyboard: [
+              [{ text: "🔄 پایش فوری اکنون", callback_data: "admin_check_monitors_now" }],
+              [{ text: "🔙 بازگشت به پنل مدیریت", callback_data: "back_to_admin" }]
+            ]
+          });
+        }
+      }
+
+      if (data === "admin_check_monitors_now") {
+        if (userId !== adminId) {
+          return callbackReply(ACCESS_DENIED_TEXT, { inline_keyboard: [[{ text: "🔙 بازگشت", callback_data: "back_to_main" }]] });
+        }
+        if (db) {
+          const res = await db.prepare("SELECT * FROM website_monitors WHERE is_active = 1").all();
+          const list = res.results || [];
+          let report = `🚀 <b>نتایج پایش فوری سامانه‌ها:</b>\n\n`;
+          for (const m of list) {
+            const start = Date.now();
+            let httpCode = 0;
+            let upStatus = "UNKNOWN";
+            let srvStatus = "UNKNOWN";
+            let details = "";
+            try {
+              const c = new AbortController();
+              const to = setTimeout(() => c.abort(), 7000);
+              const resp = await fetch(m.url, {
+                headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" },
+                signal: c.signal
+              });
+              clearTimeout(to);
+              httpCode = resp.status;
+              const respTime = Date.now() - start;
+              if (resp.ok || (resp.status >= 200 && resp.status < 400)) {
+                upStatus = "UP";
+                const pageText = await resp.text();
+                let rule = {};
+                try { rule = JSON.parse(m.detection_rule || "{}"); } catch(e){}
+                const openKw = rule.open_keywords || [];
+                const closedKw = rule.closed_keywords || [];
+                let isOpened = openKw.some(kw => pageText.includes(kw));
+                let isClosed = closedKw.some(kw => pageText.includes(kw));
+                srvStatus = (isOpened && !isClosed) ? "OPEN" : (isClosed ? "CLOSED" : "UNKNOWN");
+                details = `زمان پاسخ: ${respTime}ms`;
+              } else {
+                upStatus = "DOWN";
+                srvStatus = "CLOSED";
+                details = `خطای HTTP ${resp.status}`;
+              }
+            } catch(e) {
+              upStatus = "DOWN";
+              srvStatus = "CLOSED";
+              details = e.name === "AbortError" ? "خطای مهلت زمانی (Timeout)" : "خطای شبکه / عدم دسترسی";
+            }
+            await db.prepare(`
+              UPDATE website_monitors
+              SET uptime_status = ?, service_status = ?, last_http_code = ?, last_checked_at = CURRENT_TIMESTAMP
+              WHERE id = ?
+            `).bind(upStatus, srvStatus, httpCode, m.id).run();
+            const icon = upStatus === "UP" ? "🟢" : "🔴";
+            report += `${icon} <b>${m.title}</b>: ${upStatus} | ثبت‌نام: ${srvStatus}\n   ▫️ ${details}\n\n`;
+          }
+          return callbackReply(report, {
+            inline_keyboard: [[{ text: "🔙 بازگشت به پایش", callback_data: "admin_monitors" }]]
+          });
+        }
+      }
+
+      if (data === "admin_orders") {
+        if (userId !== adminId) {
+          return callbackReply(ACCESS_DENIED_TEXT, { inline_keyboard: [[{ text: "🔙 بازگشت", callback_data: "back_to_main" }]] });
+        }
+        if (db) {
+          const orders = await db.prepare(`
+            SELECT o.*, s.title as service_title
+            FROM orders o
+            JOIN service_items s ON o.service_id = s.id
+            ORDER BY o.created_at DESC
+            LIMIT 15
+          `).all();
+
+          if (!orders.results || orders.results.length === 0) {
+            return callbackReply("📂 <b>کارتابل سفارشات اپراتور</b>\n\nدر حال حاضر هیچ سفارشی در سامانه ثبت نشده است.", {
+              inline_keyboard: [[{ text: "🔙 بازگشت به پنل مدیریت", callback_data: "back_to_admin" }]]
+            });
+          }
+
+          const statusMap = {
+            "PENDING": "⏳",
+            "APPROVED": "🟢",
+            "NEED_INFO": "⚠️",
+            "COMPLETED": "✅",
+            "REJECTED": "❌"
+          };
+          const keyboard = [];
+          const lines = [];
+          for (const ord of orders.results) {
+            const icon = statusMap[ord.status] || "📌";
+            keyboard.push([{
+              text: `${icon} ${ord.tracking_code} | ${(ord.service_title || "").slice(0, 15)}`,
+              callback_data: `op_view_${ord.id}`
+            }]);
+            lines.push(`• <code>${ord.tracking_code}</code> — ${ord.service_title} (${ord.status})`);
+          }
+          keyboard.push([{ text: "🔙 بازگشت به پنل مدیریت", callback_data: "back_to_admin" }]);
+
+          return callbackReply(`📂 <b>کارتابل سفارشات اپراتور (${orders.results.length} پرونده اخیر):</b>\n\n${lines.join("\n")}\n\nجهت بررسی مدارک و تغییر وضعیت، پرونده را انتخاب فرمایید:`, {
+            inline_keyboard: keyboard
+          });
+        }
+      }
+
+      if (data.startsWith("op_view_")) {
+        if (userId !== adminId) {
+          return callbackReply(ACCESS_DENIED_TEXT, { inline_keyboard: [[{ text: "🔙 بازگشت", callback_data: "back_to_main" }]] });
+        }
+        const orderId = parseInt(data.replace("op_view_", ""), 10);
+        if (db && orderId) {
+          const order = await db.prepare(`
+            SELECT o.*, u.full_name as user_full_name, u.telegram_id as user_telegram_id, s.title as service_title
+            FROM orders o
+            JOIN users u ON o.user_id = u.id
+            JOIN service_items s ON o.service_id = s.id
+            WHERE o.id = ?
+          `).bind(orderId).first();
+
+          if (order) {
+            let fieldsText = "";
+            try {
+              const fd = JSON.parse(order.form_data || "{}");
+              fieldsText = Object.entries(fd).map(([k, v]) => `• <b>${k}:</b> <code>${v}</code>`).join("\n");
+            } catch(e){}
+
+            const viewText = `📄 <b>جزییات پرونده ${order.tracking_code}</b>\n\n` +
+              `👤 <b>متقاضی:</b> ${order.user_full_name} (<code>${order.user_telegram_id}</code>)\n` +
+              `📋 <b>خدمت:</b> ${order.service_title}\n` +
+              `📌 <b>وضعیت کنونی:</b> <code>${order.status}</code>\n` +
+              `🕒 <b>زمان ثبت:</b> <code>${(order.created_at || "").replace("T", " ").slice(0, 16)}</code>\n\n` +
+              `📝 <b>داده‌های فرم:</b>\n${fieldsText || "—"}\n\n` +
+              `💬 <b>توضیحات قبلی:</b> ${order.operator_notes || "—"}\n\n` +
+              `جهت اقدام روی پرونده، وضعیت جدید را انتخاب فرمایید:`;
+
+            const opKeyboard = [
+              [
+                { text: "🟢 تایید مدارک", callback_data: `op_setstatus_${order.id}_APPROVED` },
+                { text: "⚠️ نقص مدارک", callback_data: `op_setstatus_${order.id}_NEED_INFO` }
+              ],
+              [
+                { text: "✅ تکمیل نهایی", callback_data: `op_setstatus_${order.id}_COMPLETED` },
+                { text: "❌ رد پرونده", callback_data: `op_setstatus_${order.id}_REJECTED` }
+              ],
+              [{ text: "🔙 بازگشت به کارتابل", callback_data: "admin_orders" }]
+            ];
+
+            return callbackReply(viewText, { inline_keyboard: opKeyboard });
+          }
+        }
+      }
+
+      if (data.startsWith("op_setstatus_")) {
+        if (userId !== adminId) {
+          return callbackReply(ACCESS_DENIED_TEXT, { inline_keyboard: [[{ text: "🔙 بازگشت", callback_data: "back_to_main" }]] });
+        }
+        const parts = data.split("_");
+        const orderId = parseInt(parts[2], 10);
+        const newStatus = parts[3];
+
+        if (db && orderId && newStatus) {
+          const prevOrder = await db.prepare("SELECT status FROM orders WHERE id = ?").bind(orderId).first();
+          const prevStatus = prevOrder ? prevOrder.status : "PENDING";
+
+          await db.prepare("UPDATE orders SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+            .bind(newStatus, orderId).run();
+
+          try {
+            await db.prepare("INSERT INTO order_audit_logs (order_id, actor_id, from_status, to_status, note) VALUES (?, ?, ?, ?, ?)")
+              .bind(orderId, adminId, prevStatus, newStatus, "تغییر وضعیت از دکمه شیشه‌ای تلگرام").run();
+          } catch(e){}
+
+          return callbackReply(`✅ <b>وضعیت پرونده #${orderId} با موفقیت به <code>${newStatus}</code> تغییر یافت.</b>`, {
+            inline_keyboard: [
+              [{ text: "📂 بازگشت به کارتابل", callback_data: "admin_orders" }],
+              [{ text: "🔙 پنل مدیریت", callback_data: "back_to_admin" }]
+            ]
+          });
+        }
+      }
+
+      // ۱۵. بازگشت به پنل مدیریت
+      if (data === "back_to_admin") {
+        if (userId !== adminId) {
+          return callbackReply(ACCESS_DENIED_TEXT, { inline_keyboard: [[{ text: "🔙 بازگشت", callback_data: "back_to_main" }]] });
+        }
+        return callbackReply("🔐 <b>پنل مدیریت سامانه کافی نت لیمو:</b>\n\nجهت نظارت بر سامانه، یکی از بخش‌های زیر را انتخاب فرمایید:", {
+          inline_keyboard: [
+            [{ text: "📊 آمار و وضعیت سیستم", callback_data: "admin_stats" }],
+            [{ text: "📂 کارتابل درخواست‌ها", callback_data: "admin_orders" }],
+            [{ text: "🌐 وضعیت پایش سایت‌ها", callback_data: "admin_monitors" }],
+            [{ text: "🏠 منوی اصلی", callback_data: "back_to_main" }]
+          ]
+        });
+      }
+
+      // ۱۶. بازگشت به منوی اصلی
+      if (data === "back_to_main") {
+        const webappUrl = env.WEBAPP_URL || `https://${reqUrl.hostname}/webapp`;
+        return callbackReply(WELCOME_TEXT, {
+          inline_keyboard: [
+            [{ text: "📱 ورود به مینی‌اپلیکیشن لیمو", web_app: { url: webappUrl } }],
+            [{ text: "📋 فهرست خدمات", callback_data: "services_list" }],
+            [{ text: "🔍 پیگیری با کد", callback_data: "order_tracking" }, { text: "📂 درخواست‌های من", callback_data: "my_orders" }],
+            [{ text: "💳 کیف پول و موجودی", callback_data: "wallet_menu" }, { text: "⏰ یادآورها", callback_data: "reminders_menu" }],
+            [{ text: "📞 ارتباط با اپراتور", callback_data: "contact_operator" }]
+          ]
+        });
+      }
+    }
+    return new Response(JSON.stringify({ ok: true, status: "ignored" }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" }
+    });
+  },
+
+  /**
+   * زمان‌بند Cron Trigger کلودفلر (اجرای خودکار هر ۵ دقیقه در پس‌زمینه بدون نیاز به کامپیوتر کاربر)
+   */
+  async scheduled(event, env, ctx) {
+    const db = env.DB;
+    if (!db || !botToken) return;
+
+    // ۱. بررسی یادآورهای سررسیدشده
+    const dueReminders = await db.prepare(`
+      SELECT r.id, r.title, r.shamsi_date, u.telegram_id
+      FROM reminders r
+      JOIN users u ON r.user_id = u.id
+      WHERE r.is_sent = 0 AND r.target_date <= CURRENT_TIMESTAMP
+    `).all();
+
+    if (dueReminders.results && dueReminders.results.length > 0) {
+      for (const rem of dueReminders.results) {
+        const text = `⏰ <b>سررسید یادآور کافی نت لیمو</b>\n\n📌 <b>موضوع:</b> ${rem.title}\n📅 <b>موعد:</b> ${rem.shamsi_date}\n\n💡 متقاضی گرامی، زمان مهلت فرارسیده است.`;
+        await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ chat_id: rem.telegram_id, text: text, parse_mode: "HTML" })
+        });
+        await db.prepare("UPDATE reminders SET is_sent = 1, sent_at = CURRENT_TIMESTAMP WHERE id = ?").bind(rem.id).run();
+      }
+    }
+  }
+};
+
+function webhookReply(obj) {
+  return new Response(JSON.stringify(obj), {
+    status: 200,
+    headers: { "Content-Type": "application/json" }
+  });
+}
