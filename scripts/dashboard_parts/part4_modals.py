@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# Part 4: Admin Dashboard Modals (Dossier, New Customer, Direct Telegram Msg, Order Details, Service Form Builder, Categories, Wallet, Campaigns, Broadcast, Monitors, Channels)
+# Part 4: Admin Dashboard Modals (Dossier, Order Details with Shop Sync, Service Form Builder, Operators, etc.)
 
 MODALS_HTML = r'''
         <!-- ======================================================== -->
@@ -10,7 +10,7 @@ MODALS_HTML = r'''
                 <!-- سربرگ پرونده مشتری با اطلاعات هویتی و تلگرام -->
                 <div class="p-6 border-b border-slate-100 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-slate-50/80">
                     <div class="flex items-center gap-3">
-                        <div class="w-12 h-12 rounded-2xl bg-slate-900 text-white flex items-center justify-center font-black text-base shadow-sm">
+                        <div class="w-12 h-12 rounded-2xl bg-gradient-to-tr from-emerald-950 to-slate-900 text-white flex items-center justify-center font-black text-base shadow-sm">
                             👤
                         </div>
                         <div>
@@ -82,7 +82,7 @@ MODALS_HTML = r'''
 
                 <!-- محتوای تب‌های پرونده -->
                 <div class="p-6 overflow-y-auto flex-1 space-y-4">
-                    <!-- تب سفارش‌های متقاضی (لینک مستقیم به جزییات هر سفارش) -->
+                    <!-- تب سفارش‌های متقاضی -->
                     <div v-if="dossierTab === 'orders'" class="space-y-3">
                         <div v-if="selectedDossier.orders.length === 0" class="text-center py-8 text-slate-400 text-xs">سفارشی برای این متقاضی ثبت نشده است.</div>
                         <div v-for="ord in selectedDossier.orders" :key="ord.id" class="p-4 bg-slate-50 rounded-2xl border border-slate-200 text-xs space-y-2 hover:border-slate-300 transition">
@@ -91,7 +91,7 @@ MODALS_HTML = r'''
                                 <div class="flex items-center gap-2">
                                     <span :class="statusBadgeClass(ord.status)" class="px-2.5 py-0.5 rounded-full text-[10px] font-bold">{{ statusLabel(ord.status) }}</span>
                                     <button @click="openOrderDetail(ord)" class="px-3 py-1 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-bold transition">
-                                        👁️ مشاهده جزییات پرونده
+                                        👁️ مشاهده جزییات
                                     </button>
                                 </div>
                             </div>
@@ -103,15 +103,14 @@ MODALS_HTML = r'''
                     <!-- تب گفتگوی زنده دوطرفه درون پرونده مشتری -->
                     <div v-if="dossierTab === 'chat'" class="space-y-4">
                         <div class="p-3 bg-blue-50 border border-blue-200 rounded-xl text-xs text-blue-900">
-                            💬 <b>پنل چت اختصاصی با {{ selectedDossier.user.full_name }}:</b> هر پیامی که در این کادر ارسال کنید بلافاصله از طریق ربات تلگرام به پی‌وی متقاضی ارسال و در سوابق ذخیره می‌شود.
+                            💬 <b>پنل چت اختصاصی با {{ selectedDossier.user.full_name }}:</b> پیام‌های ارسالی از این بخش مستقیماً به پی‌وی تلگرام مشتری مخابره و در تاریخچه مکالمات ذخیره می‌شود.
                         </div>
 
-                        <!-- پیام‌های گفتگو -->
                         <div class="border border-slate-200 rounded-2xl p-4 h-64 overflow-y-auto space-y-3 bg-slate-50/50">
                             <div v-for="m in dossierChatMessages" :key="m.id"
                                 :class="m.sender_role === 'OPERATOR' ? 'mr-auto text-left' : 'ml-auto text-right'"
                                 class="max-w-[80%] space-y-1">
-                                <div :class="m.sender_role === 'OPERATOR' ? 'bg-limo-600 text-slate-950 font-medium' : 'bg-white border border-slate-200 text-slate-800'"
+                                <div :class="m.sender_role === 'OPERATOR' ? 'bg-gradient-to-r from-limo-500 to-lime-600 text-slate-950 font-bold' : 'bg-white border border-slate-200 text-slate-800'"
                                     class="p-2.5 rounded-xl text-xs shadow-sm leading-relaxed">
                                     {{ m.message_text }}
                                 </div>
@@ -122,19 +121,18 @@ MODALS_HTML = r'''
                             </div>
                         </div>
 
-                        <!-- ارسال پاسخ -->
                         <form @submit.prevent="sendDossierChatReply" class="flex gap-2">
                             <input v-model="dossierReplyText" type="text" placeholder="متن پیام جهت ارسال مستقیم به تلگرام مشتری..."
                                 class="flex-1 px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:outline-none focus:border-limo-500">
                             <button type="submit" :disabled="!dossierReplyText.trim() || isSendingDossierReply"
-                                class="px-5 py-2.5 bg-limo-600 hover:bg-limo-500 text-slate-950 font-black rounded-xl text-xs transition shadow-sm flex items-center gap-1.5">
+                                class="px-5 py-2.5 bg-gradient-to-r from-limo-500 to-lime-600 hover:from-limo-400 hover:to-lime-500 text-slate-950 font-black rounded-xl text-xs transition shadow-sm flex items-center gap-1.5">
                                 <span>ارسال فوری</span>
                                 <span>🚀</span>
                             </button>
                         </form>
                     </div>
 
-                    <!-- تب اطلاعات هویتی و ویرایش مشخصات متقاضی -->
+                    <!-- تب اطلاعات هویتی و یادداشت‌ها -->
                     <div v-if="dossierTab === 'info'" class="space-y-4">
                         <form @submit.prevent="saveCustomerInfo" class="space-y-4">
                             <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
@@ -283,7 +281,8 @@ MODALS_HTML = r'''
                     </div>
                     <div class="pt-2 flex justify-end gap-2">
                         <button type="button" @click="newCustomerModal = false" class="px-4 py-2 bg-slate-100 hover:bg-slate-200 rounded-xl text-slate-600 font-bold">انصراف</button>
-                        <button type="submit" :disabled="isCreatingCustomer" class="px-5 py-2 bg-limo-600 hover:bg-limo-500 text-slate-950 font-black rounded-xl">
+                        <button type="submit" :disabled="isCreatingCustomer"
+                            class="px-5 py-2 bg-gradient-to-r from-limo-500 to-lime-600 hover:from-limo-400 hover:to-lime-500 text-slate-950 font-black rounded-xl">
                             ایجاد پرونده مشتری
                         </button>
                     </div>
@@ -322,7 +321,7 @@ MODALS_HTML = r'''
         </div>
 
         <!-- ======================================================== -->
-        <!-- مودال ۴: جزییات سفارش و تغییر وضعیت (Order Details Modal) -->
+        <!-- مودال ۴: جزییات سفارش و تغییر وضعیت + ارسال به نرم‌افزار کافی‌نت -->
         <!-- ======================================================== -->
         <div v-if="selectedOrder" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-sm">
             <div class="bg-white rounded-3xl max-w-3xl w-full max-h-[90vh] flex flex-col shadow-2xl border border-slate-100 text-right overflow-hidden">
@@ -375,15 +374,24 @@ MODALS_HTML = r'''
                     </div>
                 </div>
 
-                <div class="p-4 border-t border-slate-100 bg-slate-50 flex justify-between items-center">
-                    <button @click="softDeleteItem('order', selectedOrder.id, selectedOrder.tracking_code)"
-                        class="px-3 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded-xl text-xs font-bold transition">
-                        🗑️ انتقال به سطل زباله
-                    </button>
+                <div class="p-4 border-t border-slate-100 bg-slate-50 flex flex-wrap justify-between items-center gap-2">
+                    <div class="flex items-center gap-2">
+                        <button @click="softDeleteItem('order', selectedOrder.id, selectedOrder.tracking_code)"
+                            class="px-3 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded-xl text-xs font-bold transition">
+                            🗑️ انتقال به سطل زباله
+                        </button>
+                        <!-- دکمه اتصال و ارسال به نرم‌افزار کافی‌نت -->
+                        <button @click="syncOrderToShop(selectedOrder.id)"
+                            class="px-3 py-2 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-sm">
+                            <span>🔗</span>
+                            <span>ارسال به نرم‌افزار کافی‌نت (سفارشات تلگرام)</span>
+                        </button>
+                    </div>
+
                     <div class="flex items-center gap-2">
                         <button @click="selectedOrder = null" class="px-4 py-2 bg-white border border-slate-200 rounded-xl text-slate-600 text-xs font-bold">بستن</button>
                         <button @click="updateOrderStatus" :disabled="isUpdatingStatus"
-                            class="px-5 py-2 bg-limo-600 hover:bg-limo-500 text-slate-950 rounded-xl text-xs font-black transition">
+                            class="px-5 py-2 bg-gradient-to-r from-limo-500 to-lime-600 hover:from-limo-400 hover:to-lime-500 text-slate-950 rounded-xl text-xs font-black transition shadow-sm">
                             ثبت تغییر وضعیت
                         </button>
                     </div>
@@ -402,7 +410,6 @@ MODALS_HTML = r'''
                 </div>
 
                 <div class="p-6 overflow-y-auto flex-1 space-y-5 text-xs">
-                    <!-- مشخصات پایه خدمت -->
                     <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <div>
                             <label class="block font-bold text-slate-700 mb-1">عنوان خدمت <span class="text-rose-500">*</span></label>
@@ -429,7 +436,7 @@ MODALS_HTML = r'''
                         <textarea v-model="serviceForm.description" rows="2" class="w-full px-3 py-2 border border-slate-200 rounded-xl"></textarea>
                     </div>
 
-                    <!-- انتقال تنظیم هزینه شاهدان برای خدمت کد رهگیری مسکن -->
+                    <!-- تنظیم هزینه شاهدان برای خدمت کد رهگیری مسکن -->
                     <div v-if="serviceForm.code === 'HOUSING_TRACKING_CODE' || (serviceForm.title && serviceForm.title.includes('رهگیری'))"
                         class="p-4 bg-amber-50 border border-amber-200 rounded-2xl space-y-2">
                         <div class="flex items-center gap-2">
@@ -444,7 +451,7 @@ MODALS_HTML = r'''
                         </div>
                     </div>
 
-                    <!-- بخش فرم‌ساز فیلدهای سفارشی پویا (Dynamic Custom Field Builder) -->
+                    <!-- بخش فرم‌ساز فیلدهای سفارشی پویا -->
                     <div class="space-y-3 pt-3 border-t border-slate-100">
                         <div class="flex justify-between items-center">
                             <div>
@@ -457,7 +464,6 @@ MODALS_HTML = r'''
                             </button>
                         </div>
 
-                        <!-- جدول فیلدهای تعریف‌شده -->
                         <div class="space-y-2">
                             <div v-for="(field, index) in customFields" :key="index"
                                 class="p-3 bg-slate-50 border border-slate-200 rounded-xl grid grid-cols-1 sm:grid-cols-12 gap-2 items-center">
@@ -501,7 +507,7 @@ MODALS_HTML = r'''
                 <div class="p-4 border-t border-slate-100 bg-slate-50 flex justify-end gap-2">
                     <button type="button" @click="serviceModal = false" class="px-4 py-2 bg-white border border-slate-200 rounded-xl text-slate-600 text-xs font-bold">انصراف</button>
                     <button type="button" @click="saveServiceWithFields" :disabled="isSavingService"
-                        class="px-6 py-2 bg-limo-600 hover:bg-limo-500 text-slate-950 font-black rounded-xl text-xs transition shadow-sm">
+                        class="px-6 py-2 bg-gradient-to-r from-limo-500 to-lime-600 hover:from-limo-400 hover:to-lime-500 text-slate-950 font-black rounded-xl text-xs transition shadow-sm">
                         ذخیره خدمت و فیلدها
                     </button>
                 </div>
@@ -536,7 +542,7 @@ MODALS_HTML = r'''
                     </div>
                     <div class="pt-2 flex justify-end gap-2">
                         <button type="button" @click="categoryModal = false" class="px-4 py-2 bg-slate-100 rounded-xl font-bold text-slate-600">انصراف</button>
-                        <button type="submit" class="px-5 py-2 bg-limo-600 hover:bg-limo-500 text-slate-950 font-black rounded-xl">ذخیره دسته‌بندی</button>
+                        <button type="submit" class="px-5 py-2 bg-gradient-to-r from-limo-500 to-lime-600 hover:from-limo-400 hover:to-lime-500 text-slate-950 font-black rounded-xl">ذخیره دسته‌بندی</button>
                     </div>
                 </form>
             </div>
@@ -598,21 +604,41 @@ MODALS_HTML = r'''
                             <input v-model="campaignForm.code" type="text" required placeholder="KONKUR_1405" class="w-full px-3 py-2 border border-slate-200 rounded-xl font-mono">
                         </div>
                         <div>
-                            <label class="block font-bold text-slate-700 mb-1">وضعیت اولیه</label>
-                            <select v-model="campaignForm.status" class="w-full px-3 py-2 border border-slate-200 rounded-xl bg-white">
-                                <option value="COMING_SOON">به‌زودی</option>
+                            <label class="block font-bold text-slate-700 mb-1">وضعیت رویداد</label>
+                            <select v-model="campaignForm.status" class="w-full px-3 py-2 border border-slate-200 rounded-xl bg-white font-bold">
                                 <option value="OPEN">ثبت‌نام فعال</option>
+                                <option value="COMING_SOON">به‌زودی</option>
                                 <option value="CLOSED">پایان مهلت</option>
                             </select>
                         </div>
                     </div>
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label class="block font-bold text-slate-700 mb-1">تاریخ شروع</label>
+                            <input v-model="campaignForm.start_at" type="date" class="w-full px-3 py-2 border border-slate-200 rounded-xl font-mono">
+                        </div>
+                        <div>
+                            <label class="block font-bold text-slate-700 mb-1">تاریخ پایان مهلت</label>
+                            <input v-model="campaignForm.end_at" type="date" class="w-full px-3 py-2 border border-slate-200 rounded-xl font-mono">
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label class="block font-bold text-slate-700 mb-1">تعرفه ثبت‌نام (تومان)</label>
+                            <input v-model.number="campaignForm.base_fee" type="number" placeholder="50000" class="w-full px-3 py-2 border border-slate-200 rounded-xl font-mono">
+                        </div>
+                        <div>
+                            <label class="block font-bold text-slate-700 mb-1">اولویت نمایش (ترتیب)</label>
+                            <input v-model.number="campaignForm.order_priority" type="number" placeholder="10" class="w-full px-3 py-2 border border-slate-200 rounded-xl font-mono">
+                        </div>
+                    </div>
                     <div>
                         <label class="block font-bold text-slate-700 mb-1">توضیحات و مدارک مورد نیاز</label>
-                        <textarea v-model="campaignForm.description" rows="2" class="w-full px-3 py-2 border border-slate-200 rounded-xl"></textarea>
+                        <textarea v-model="campaignForm.description" rows="2" placeholder="توضیحات و مدارک لازم برای ثبت‌نام در این رویداد..." class="w-full px-3 py-2 border border-slate-200 rounded-xl"></textarea>
                     </div>
                     <div class="pt-2 flex justify-end gap-2">
                         <button type="button" @click="campaignModal = false" class="px-4 py-2 bg-slate-100 rounded-xl font-bold text-slate-600">انصراف</button>
-                        <button type="submit" class="px-5 py-2 bg-limo-600 hover:bg-limo-500 text-slate-950 font-black rounded-xl">ذخیره رویداد</button>
+                        <button type="submit" class="px-5 py-2 bg-gradient-to-r from-limo-500 to-lime-600 hover:from-limo-400 hover:to-lime-500 text-slate-950 font-black rounded-xl">ذخیره رویداد مقطعی</button>
                     </div>
                 </form>
             </div>
@@ -699,7 +725,42 @@ MODALS_HTML = r'''
                     </div>
                     <div class="pt-2 flex justify-end gap-2">
                         <button type="button" @click="channelModal = false" class="px-4 py-2 bg-slate-100 rounded-xl font-bold text-slate-600">انصراف</button>
-                        <button type="submit" class="px-5 py-2 bg-limo-600 hover:bg-limo-500 text-slate-950 font-black rounded-xl">ذخیره</button>
+                        <button type="submit" class="px-5 py-2 bg-gradient-to-r from-limo-500 to-lime-600 hover:from-limo-400 hover:to-lime-500 text-slate-950 font-black rounded-xl">ذخیره</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- ======================================================== -->
+        <!-- مودال ۱۲: افزودن و ویرایش اپراتور سیستم (Operator Modal) -->
+        <!-- ======================================================== -->
+        <div v-if="operatorModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-sm">
+            <div class="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-100 text-right space-y-4">
+                <div class="flex justify-between items-center border-b border-slate-100 pb-3">
+                    <h3 class="font-black text-sm text-slate-900">➕ تعریف اپراتور و سطح دسترسی جدید</h3>
+                    <button @click="operatorModal = false" class="p-1 text-slate-400 hover:text-slate-600">✕</button>
+                </div>
+                <form @submit.prevent="saveOperatorForm" class="space-y-3 text-xs">
+                    <div>
+                        <label class="block font-bold text-slate-700 mb-1">نام کامل اپراتور <span class="text-rose-500">*</span></label>
+                        <input v-model="operatorForm.full_name" type="text" required placeholder="مثال: علی رضایی" class="w-full px-3 py-2 border border-slate-200 rounded-xl">
+                    </div>
+                    <div>
+                        <label class="block font-bold text-slate-700 mb-1">نام کاربری ورود (Username) <span class="text-rose-500">*</span></label>
+                        <input v-model="operatorForm.username" type="text" required placeholder="operator1" class="w-full px-3 py-2 border border-slate-200 rounded-xl font-mono">
+                    </div>
+                    <div>
+                        <label class="block font-bold text-slate-700 mb-1">سطح دسترسی (نقش اپراتور)</label>
+                        <select v-model="operatorForm.role" class="w-full px-3 py-2 border border-slate-200 rounded-xl bg-white font-bold">
+                            <option value="SUPER_ADMIN">مدیر کل (دسترسی کامل به تمام بخش‌ها و مالی)</option>
+                            <option value="REGISTRAR">اپراتور ثبت‌نام (بررسی سفارشات و خدمات)</option>
+                            <option value="SUPPORT">پشتیبان چت (پاسخگویی به گفتگوی زنده متقاضیان)</option>
+                            <option value="ACCOUNTANT">حسابدار (مشاهده تراکنش‌ها و امور مالی)</option>
+                        </select>
+                    </div>
+                    <div class="pt-2 flex justify-end gap-2">
+                        <button type="button" @click="operatorModal = false" class="px-4 py-2 bg-slate-100 rounded-xl font-bold text-slate-600">انصراف</button>
+                        <button type="submit" class="px-5 py-2 bg-slate-900 text-white font-bold rounded-xl">ثبت دسترسی اپراتور</button>
                     </div>
                 </form>
             </div>

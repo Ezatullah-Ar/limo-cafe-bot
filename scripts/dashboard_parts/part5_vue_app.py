@@ -168,13 +168,39 @@ VUE_APP_SCRIPT = r'''
                 const isSendingReply = ref(false);
 
                 // تنظیمات کافی‌نت
+                // تنظیمات پیشرفته و تب‌های فرعی
+                const settingsActiveSubTab = ref('business');
+                const operatorsList = ref([]);
+                const operatorModal = ref(false);
+                const operatorForm = ref({
+                    id: null,
+                    username: '',
+                    full_name: '',
+                    role: 'REGISTRAR'
+                });
+                const isSavingOperator = ref(false);
+                const isTestingSync = ref(false);
+                const syncTestResult = ref(null);
+                const livePersianDate = ref('');
+
+                // فرم جامع تنظیمات کافی‌نت لیمو
                 const settingsForm = ref({
-                    business_hours: 'شنبه تا پنج‌شنبه: ۸:۳۰ الی ۲۱:۰۰',
-                    support_phones: '021-xxxx / 0912xxxxxxx',
-                    shop_address: 'تهران، خیابان آزادی، پلاک ۱۰',
+                    shop_name: 'کافی‌نت آنلاین لیمو',
+                    is_open: '1',
+                    shop_phone: '021-xxxxxxxx',
+                    emergency_phone: '0912xxxxxxx',
+                    work_hours: 'شنبه تا چهارشنبه ۸:۳۰ الی ۲۰:۳۰ | پنجشنبه‌ها ۸:۳۰ الی ۱۴:۰۰',
+                    shop_address: 'تهران، میدان آزادی، مجتمع اداری لیمو',
+                    shop_sync_enabled: '1',
+                    shop_sync_url: 'http://localhost:3000/api/bot-orders',
+                    shop_sync_api_key: 'limo_sync_secret_2026',
+                    card_number: '6037-9918-xxxx-xxxx',
+                    card_holder_name: 'کافی‌نت آنلاین لیمو',
+                    card_iban: 'IRxxxxxxxxxxxxxxxxxxxx',
+                    min_wallet_topup: 10000,
                     max_upload_size_mb: 15,
-                    shop_sync_enabled: '0',
-                    shop_sync_url: ''
+                    admin_tg_id: '',
+                    allowed_file_types: 'jpg, jpeg, png, pdf, zip'
                 });
                 const isSavingSettings = ref(false);
                 const isExportingBackup = ref(false);
@@ -268,7 +294,8 @@ VUE_APP_SCRIPT = r'''
                             fetchSupportThreads(),
                             fetchChannels(),
                             fetchTrashItems(),
-                            fetchSettings()
+                            fetchSettings(),
+                            fetchOperators()
                         ]);
                     } catch (e) {
                         console.error("Error refreshing data:", e);
@@ -293,6 +320,7 @@ VUE_APP_SCRIPT = r'''
                     else if (currentTab.value === 'monitors') fetchWithAuth('/api/admin/data');
                     else if (currentTab.value === 'channels') fetchChannels();
                     else if (currentTab.value === 'trash') fetchTrashItems();
+                    else if (currentTab.value === 'settings') { fetchSettings(); fetchOperators(); }
                     else if (currentTab.value === 'settings') fetchSettings();
                 }
 
@@ -712,17 +740,39 @@ VUE_APP_SCRIPT = r'''
                 }
 
                 function openNewCampaignModal() {
-                    campaignForm.value = { id: null, code: '', title: '', description: '', status: 'OPEN', is_active: 1 };
+                    const today = new Date().toISOString().slice(0, 10);
+                    const nextMonth = new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
+                    campaignForm.value = {
+                        id: null,
+                        code: 'CAMP_' + Math.floor(1000 + Math.random() * 9000),
+                        title: '',
+                        description: '',
+                        status: 'OPEN',
+                        start_at: today,
+                        end_at: nextMonth,
+                        base_fee: 50000,
+                        order_priority: 10,
+                        is_active: 1
+                    };
                     campaignModal.value = true;
                 }
 
                 function editCampaign(c) {
-                    campaignForm.value = { ...c };
+                    campaignForm.value = {
+                        ...c,
+                        start_at: (c.start_at || '').slice(0, 10),
+                        end_at: (c.end_at || '').slice(0, 10),
+                        base_fee: c.base_fee || 50000,
+                        order_priority: c.order_priority || 0
+                    };
                     campaignModal.value = true;
                 }
 
                 async function saveCampaignForm() {
-                    if (!campaignForm.value.title || !campaignForm.value.code) return;
+                    if (!campaignForm.value.title || !campaignForm.value.title.trim()) {
+                        alert('لطفاً عنوان رویداد مقطعی را وارد فرمایید.');
+                        return;
+                    }
                     try {
                         const res = await fetchWithAuth('/api/admin/seasonal/campaign', {
                             method: 'POST',
@@ -731,12 +781,14 @@ VUE_APP_SCRIPT = r'''
                         });
                         const data = await res.json();
                         if (data.ok) {
-                            alert("✅ رویداد مقطعی با موفقیت ذخیره شد.");
+                            alert('✅ رویداد مقطعی با موفقیت ذخیره شد.');
                             campaignModal.value = false;
-                            fetchCampaigns();
+                            await fetchCampaigns();
+                        } else {
+                            alert(data.error || 'خطا در ذخیره رویداد مقطعی');
                         }
                     } catch(e) {
-                        alert("خطا در ذخیره رویداد.");
+                        alert('خطا در برقراری ارتباط با سرور: ' + e.message);
                     }
                 }
 
@@ -1068,6 +1120,150 @@ VUE_APP_SCRIPT = r'''
                 }
 
                 // فرمت‌ها و برچسب‌های کمکی
+                // مدیریت اپراتورها و سطوح دسترسی (RBAC)
+                async function fetchOperators() {
+                    try {
+                        const res = await fetchWithAuth('/api/admin/operators');
+                        const data = await res.json();
+                        if (data.ok) {
+                            operatorsList.value = data.operators || [];
+                        }
+                    } catch(e) {
+                        console.error("fetchOperators error:", e);
+                    }
+                }
+
+                function openNewOperatorModal() {
+                    operatorForm.value = { id: null, username: '', full_name: '', role: 'REGISTRAR' };
+                    operatorModal.value = true;
+                }
+
+                async function saveOperatorForm() {
+                    if (!operatorForm.value.username || !operatorForm.value.full_name) {
+                        alert('لطفاً نام کامل و نام کاربری را وارد کنید.');
+                        return;
+                    }
+                    isSavingOperator.value = true;
+                    try {
+                        const res = await fetchWithAuth('/api/admin/operators/save', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(operatorForm.value)
+                        });
+                        const data = await res.json();
+                        if (data.ok) {
+                            operatorModal.value = false;
+                            await fetchOperators();
+                            alert('✅ مشخصات اپراتور با موفقیت ذخیره شد.');
+                        } else {
+                            alert(data.error || 'خطا در ثبت اپراتور');
+                        }
+                    } catch(e) {
+                        alert('خطا در برقراری ارتباط هنگام ثبت اپراتور');
+                    } finally {
+                        isSavingOperator.value = false;
+                    }
+                }
+
+                async function deleteOperator(id) {
+                    if (!confirm('آیا از حذف دسترسی این اپراتور اطمینان دارید؟')) return;
+                    try {
+                        const res = await fetchWithAuth('/api/admin/operators/delete', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ id })
+                        });
+                        const data = await res.json();
+                        if (data.ok) {
+                            await fetchOperators();
+                        } else {
+                            alert(data.error || 'خطا در حذف اپراتور');
+                        }
+                    } catch(e) {
+                        alert('خطا در حذف اپراتور');
+                    }
+                }
+
+                function operatorRoleLabel(role) {
+                    if (role === 'SUPER_ADMIN') return 'مدیر کل';
+                    if (role === 'REGISTRAR') return 'کارشناس ثبت‌نام';
+                    if (role === 'SUPPORT') return 'پشتیبان مشتریان';
+                    if (role === 'ACCOUNTANT') return 'حسابدار';
+                    return role || 'اپراتور';
+                }
+
+                // ارسال و لینک سفارش به نرم‌افزار کافی‌نت (Cafinet_management)
+                async function syncOrderToShop(orderId) {
+                    try {
+                        const res = await fetchWithAuth('/api/admin/order/sync-to-shop', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ order_id: orderId })
+                        });
+                        const data = await res.json();
+                        if (data.ok) {
+                            alert('سفارش با موفقیت به نرم‌افزار مدیریت کافی‌نت ارسال شد.');
+                        } else {
+                            alert('عدم امکان ارسال مستقیم به نرم‌افزار کافی‌نت.');
+                        }
+                    } catch(e) {
+                        alert('خطا در ارسال سفارش به نرم‌افزار کافی‌نت: ' + e.message);
+                    }
+                }
+
+                async function testShopSyncConnection() {
+                    isTestingSync.value = true;
+                    syncTestResult.value = null;
+                    try {
+                        const res = await fetchWithAuth('/api/admin/shop-sync/test', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                url: settingsForm.value.shop_sync_url,
+                                apiKey: settingsForm.value.shop_sync_api_key
+                            })
+                        });
+                        const data = await res.json();
+                        syncTestResult.value = data;
+                    } catch(e) {
+                        syncTestResult.value = { ok: false, error: e.message };
+                    } finally {
+                        isTestingSync.value = false;
+                    }
+                }
+
+                function updateLivePersianDate() {
+                    try {
+                        const now = new Date();
+                        const options = { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', timeZone: 'Asia/Tehran' };
+                        livePersianDate.value = new Intl.DateTimeFormat('fa-IR', options).format(now);
+                    } catch(e) {
+                        livePersianDate.value = new Date().toLocaleDateString('fa-IR');
+                    }
+                }
+
+                
+                // تغییر ترتیب و اولویت نمایش آیتم‌ها
+                async function moveItem(table, id, direction) {
+                    try {
+                        const res = await fetchWithAuth('/api/admin/reorder', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ table, id, direction })
+                        });
+                        const data = await res.json();
+                        if (data.ok) {
+                            if (table === 'services' || table === 'categories') await fetchServices();
+                            else if (table === 'campaigns') await fetchCampaigns();
+                            else if (table === 'channels') await fetchChannels();
+                        } else {
+                            alert(data.error || 'خطا در تغییر موقعیت');
+                        }
+                    } catch(e) {
+                        alert('خطا در تغییر موقعیت آیتم');
+                    }
+                }
+
                 function formatTomans(amount) {
                     return (parseInt(amount, 10) || 0).toLocaleString('fa-IR') + ' تومان';
                 }
@@ -1187,6 +1383,7 @@ VUE_APP_SCRIPT = r'''
                 }
 
                 onMounted(() => {
+                    updateLivePersianDate();
                     const token = localStorage.getItem('limo_admin_token');
                     if (token) {
                         isAuthenticated.value = true;
@@ -1196,6 +1393,22 @@ VUE_APP_SCRIPT = r'''
                 });
 
                 return {
+                    settingsActiveSubTab,
+                    operatorsList,
+                    operatorModal,
+                    operatorForm,
+                    isSavingOperator,
+                    isTestingSync,
+                    syncTestResult,
+                    livePersianDate,
+                    fetchOperators,
+                    openNewOperatorModal,
+                    saveOperatorForm,
+                    deleteOperator,
+                    operatorRoleLabel,
+                    syncOrderToShop,
+                    moveItem,
+                    testShopSyncConnection,
                     isAuthenticated,
                     adminUser,
                     loginUsername,
