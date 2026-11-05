@@ -12,8 +12,12 @@ CREATE TABLE IF NOT EXISTS users (
     phone_number TEXT,
     role TEXT NOT NULL DEFAULT 'CUSTOMER',
     is_active INTEGER NOT NULL DEFAULT 1,
+    national_code TEXT,
+    alien_code TEXT,
+    notes TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    deleted_at DATETIME
 );
 CREATE INDEX IF NOT EXISTS idx_users_telegram_id ON users(telegram_id);
 
@@ -26,7 +30,8 @@ CREATE TABLE IF NOT EXISTS service_categories (
     order_priority INTEGER NOT NULL DEFAULT 0,
     is_active INTEGER NOT NULL DEFAULT 1,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-);
+,
+    deleted_at DATETIME);
 
 -- ۳. آیتم‌های خدمت در کاتالوگ
 CREATE TABLE IF NOT EXISTS service_items (
@@ -43,7 +48,8 @@ CREATE TABLE IF NOT EXISTS service_items (
     is_active INTEGER NOT NULL DEFAULT 1,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-);
+,
+    deleted_at DATETIME);
 
 -- ۴. سفارش‌ها و پرونده‌های مشتریان
 CREATE TABLE IF NOT EXISTS orders (
@@ -56,7 +62,8 @@ CREATE TABLE IF NOT EXISTS orders (
     operator_notes TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-);
+,
+    deleted_at DATETIME);
 CREATE INDEX IF NOT EXISTS idx_orders_tracking_code ON orders(tracking_code);
 CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);
 
@@ -103,7 +110,8 @@ CREATE TABLE IF NOT EXISTS website_monitors (
     detection_rule TEXT NOT NULL DEFAULT '{}',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-);
+,
+    deleted_at DATETIME);
 
 -- ۸. لاگ‌های پایش سایت‌ها
 CREATE TABLE IF NOT EXISTS monitor_logs (
@@ -194,7 +202,8 @@ CREATE TABLE IF NOT EXISTS seasonal_campaigns (
     is_active INTEGER NOT NULL DEFAULT 1,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-);
+,
+    deleted_at DATETIME);
 CREATE INDEX IF NOT EXISTS idx_seasonal_code ON seasonal_campaigns(code);
 CREATE INDEX IF NOT EXISTS idx_seasonal_status ON seasonal_campaigns(status);
 
@@ -207,7 +216,8 @@ CREATE TABLE IF NOT EXISTS communication_channels (
     is_active INTEGER NOT NULL DEFAULT 1,
     order_priority INTEGER NOT NULL DEFAULT 0,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-);
+,
+    deleted_at DATETIME);
 CREATE INDEX IF NOT EXISTS idx_comm_channels_key ON communication_channels(key);
 
 -- ۱۴. تنظیمات سراسری سیستم

@@ -1,0 +1,1338 @@
+# -*- coding: utf-8 -*-
+# Part 5: Vue 3 Application Logic and Methods
+
+VUE_APP_SCRIPT = r'''
+    </div>
+
+    <!-- اسکریپت ویو جی‌اس ۳ (Vue 3 Single Page Application) -->
+    <script>
+        const { createApp, ref, computed, onMounted } = Vue;
+
+        createApp({
+            setup() {
+                // وضعیت احراز هویت
+                const isAuthenticated = ref(false);
+                const adminUser = ref({ username: 'admin' });
+                const loginUsername = ref('admin');
+                const loginPassword = ref('');
+                const loginError = ref('');
+                const isLoggingIn = ref(false);
+
+                // ناوبری و تب فعال
+                const currentTab = ref('overview');
+                const mobileSidebarOpen = ref(false);
+                const isLoading = ref(false);
+
+                // آمار کلی
+                const stats = ref({
+                    total_orders: 0,
+                    pending_orders: 0,
+                    approved_orders: 0,
+                    need_info_orders: 0,
+                    completed_orders: 0,
+                    total_users: 0
+                });
+
+                // داده‌های اصلی سیستم
+                const orders = ref([]);
+                const customers = ref([]);
+                const services = ref([]);
+                const categories = ref([]);
+                const wallets = ref([]);
+                const seasonalCampaigns = ref([]);
+                const supportThreads = ref([]);
+                const communicationChannels = ref([]);
+                const websiteMonitors = ref([]);
+                const trashItems = ref([]);
+
+                // فیلترهای سفارشات
+                const orderStatusFilter = ref('ALL');
+                const orderSearchQuery = ref('');
+                const customerSearchQuery = ref('');
+                const serviceCategoryFilter = ref('ALL');
+
+                // مودال پرونده مشتری
+                const selectedDossier = ref(null);
+                const dossierTab = ref('orders');
+                const dossierChatMessages = ref([]);
+                const dossierReplyText = ref('');
+                const isSendingDossierReply = ref(false);
+                const customerEditForm = ref({});
+                const isSavingCustomer = ref(false);
+
+                // مودال افزودن مشتری دستی جدید
+                const newCustomerModal = ref(false);
+                const newCustomerForm = ref({
+                    full_name: '',
+                    phone_number: '',
+                    national_code: '',
+                    alien_code: '',
+                    telegram_id: '',
+                    username: '',
+                    notes: ''
+                });
+                const isCreatingCustomer = ref(false);
+
+                // مودال ارسال پیام مستقیم تلگرام
+                const directMsgModal = ref(false);
+                const directMsgTarget = ref({});
+                const directMsgText = ref('');
+                const isSendingDirectMsg = ref(false);
+
+                // مودال جزییات سفارش
+                const selectedOrder = ref(null);
+                const newOrderStatus = ref('PENDING');
+                const newOperatorNotes = ref('');
+                const isUpdatingStatus = ref(false);
+
+                // مودال خدمت و فرم‌ساز پویا
+                const serviceModal = ref(false);
+                const serviceForm = ref({
+                    id: null,
+                    category_id: 1,
+                    code: '',
+                    title: '',
+                    description: '',
+                    base_fee: 0,
+                    witness_fee: 3500000,
+                    order_priority: 0,
+                    is_active: 1
+                });
+                const customFields = ref([]);
+                const isSavingService = ref(false);
+
+                // مودال دسته‌بندی
+                const categoryModal = ref(false);
+                const categoryForm = ref({
+                    id: null,
+                    code: '',
+                    title: '',
+                    description: '',
+                    order_priority: 0
+                });
+
+                // مودال کیف پول
+                const walletModal = ref(false);
+                const walletForm = ref({
+                    wallet_id: null,
+                    user_id: null,
+                    customer_name: '',
+                    amount: 0,
+                    notes: ''
+                });
+                const isAdjustingWallet = ref(false);
+
+                // مودال ثبت‌نام مقطعی
+                const campaignModal = ref(false);
+                const campaignForm = ref({
+                    id: null,
+                    code: '',
+                    title: '',
+                    description: '',
+                    status: 'OPEN',
+                    is_active: 1
+                });
+
+                // مودال برودکست
+                const broadcastModal = ref(false);
+                const broadcastCampaign = ref(null);
+                const broadcastMessage = ref('');
+                const isBroadcasting = ref(false);
+
+                // مودال و پایش سامانه‌ها
+                const monitorModal = ref(false);
+                const monitorForm = ref({
+                    id: null,
+                    code: '',
+                    title: '',
+                    url: '',
+                    check_interval_minutes: 15,
+                    is_active: 1
+                });
+                const isCheckingMonitors = ref(false);
+
+                // مودال کانال ارتباطی
+                const channelModal = ref(false);
+                const channelForm = ref({
+                    id: null,
+                    title: '',
+                    key: '',
+                    value: '',
+                    is_active: 1
+                });
+
+                // ماژول چت زنده پشتیبانی
+                const selectedThread = ref(null);
+                const threadMessages = ref([]);
+                const supportReplyText = ref('');
+                const isSendingReply = ref(false);
+
+                // تنظیمات کافی‌نت
+                const settingsForm = ref({
+                    business_hours: 'شنبه تا پنج‌شنبه: ۸:۳۰ الی ۲۱:۰۰',
+                    support_phones: '021-xxxx / 0912xxxxxxx',
+                    shop_address: 'تهران، خیابان آزادی، پلاک ۱۰',
+                    max_upload_size_mb: 15,
+                    shop_sync_enabled: '0',
+                    shop_sync_url: ''
+                });
+                const isSavingSettings = ref(false);
+                const isExportingBackup = ref(false);
+
+                // محاسبات وضعیت‌ها
+                const pendingCount = computed(() => orders.value.filter(o => o.status === 'PENDING').length);
+                const pendingSupportCount = computed(() => supportThreads.value.filter(t => t.status === 'PENDING_OPERATOR').length);
+
+                const filteredOrders = computed(() => {
+                    return orders.value.filter(o => {
+                        const matchStatus = (orderStatusFilter.value === 'ALL') || (o.status === orderStatusFilter.value);
+                        const q = orderSearchQuery.value.trim().toLowerCase();
+                        const matchQuery = !q || (o.tracking_code && o.tracking_code.toLowerCase().includes(q)) || (o.full_name && o.full_name.toLowerCase().includes(q));
+                        return matchStatus && matchQuery;
+                    });
+                });
+
+                const filteredServices = computed(() => {
+                    if (serviceCategoryFilter.value === 'ALL') return services.value;
+                    return services.value.filter(s => s.category_id === serviceCategoryFilter.value);
+                });
+
+                // توابع کمکی احراز هویت
+                function getAuthHeader() {
+                    const token = localStorage.getItem('limo_admin_token');
+                    return token ? { 'Authorization': 'Basic ' + token } : {};
+                }
+
+                async function fetchWithAuth(url, options = {}) {
+                    options.headers = {
+                        ...(options.headers || {}),
+                        ...getAuthHeader()
+                    };
+                    const res = await fetch(url, options);
+                    if (res.status === 401) {
+                        isAuthenticated.value = false;
+                        localStorage.removeItem('limo_admin_token');
+                    }
+                    return res;
+                }
+
+                // عملیات ورود و خروج
+                async function login() {
+                    loginError.value = '';
+                    isLoggingIn.value = true;
+                    try {
+                        const token = btoa(`${loginUsername.value.trim()}:${loginPassword.value.trim()}`);
+                        const res = await fetch('/api/admin/data', {
+                            headers: { 'Authorization': 'Basic ' + token }
+                        });
+                        const data = await res.json();
+                        if (res.ok && data.ok) {
+                            localStorage.setItem('limo_admin_token', token);
+                            localStorage.setItem('limo_admin_username', loginUsername.value.trim());
+                            adminUser.value.username = loginUsername.value.trim();
+                            isAuthenticated.value = true;
+                            refreshData();
+                        } else {
+                            loginError.value = 'نام کاربری یا کلمه عبور نادرست است.';
+                        }
+                    } catch (e) {
+                        loginError.value = 'خطا در ارتباط با سرور.';
+                    } finally {
+                        isLoggingIn.value = false;
+                    }
+                }
+
+                function logout() {
+                    localStorage.removeItem('limo_admin_token');
+                    localStorage.removeItem('limo_admin_username');
+                    isAuthenticated.value = false;
+                    loginPassword.value = '';
+                }
+
+                // بارگذاری اولیه و جامع داده‌ها
+                async function refreshData() {
+                    isLoading.value = true;
+                    try {
+                        const res = await fetchWithAuth('/api/admin/data');
+                        const data = await res.json();
+                        if (data.ok) {
+                            stats.value = data.stats || stats.value;
+                            orders.value = data.orders || [];
+                            websiteMonitors.value = data.monitors || [];
+                        }
+                        await Promise.all([
+                            fetchCustomers(),
+                            fetchServices(),
+                            fetchWallets(),
+                            fetchCampaigns(),
+                            fetchSupportThreads(),
+                            fetchChannels(),
+                            fetchTrashItems(),
+                            fetchSettings()
+                        ]);
+                    } catch (e) {
+                        console.error("Error refreshing data:", e);
+                    } finally {
+                        isLoading.value = false;
+                    }
+                }
+
+                function switchTab(tab) {
+                    currentTab.value = tab;
+                    mobileSidebarOpen.value = false;
+                    refreshCurrentTab();
+                }
+
+                function refreshCurrentTab() {
+                    if (currentTab.value === 'overview' || currentTab.value === 'orders') refreshData();
+                    else if (currentTab.value === 'customers') fetchCustomers();
+                    else if (currentTab.value === 'services' || currentTab.value === 'categories') fetchServices();
+                    else if (currentTab.value === 'wallets') fetchWallets();
+                    else if (currentTab.value === 'seasonal') fetchCampaigns();
+                    else if (currentTab.value === 'chats') fetchSupportThreads();
+                    else if (currentTab.value === 'monitors') fetchWithAuth('/api/admin/data');
+                    else if (currentTab.value === 'channels') fetchChannels();
+                    else if (currentTab.value === 'trash') fetchTrashItems();
+                    else if (currentTab.value === 'settings') fetchSettings();
+                }
+
+                // مدیریت مشتریان CRM
+                let debounceTimer = null;
+                function debouncedFetchCustomers() {
+                    clearTimeout(debounceTimer);
+                    debounceTimer = setTimeout(fetchCustomers, 300);
+                }
+
+                async function fetchCustomers() {
+                    try {
+                        const q = encodeURIComponent(customerSearchQuery.value || '');
+                        const res = await fetchWithAuth(`/api/admin/customers?q=${q}`);
+                        const data = await res.json();
+                        if (data.ok) customers.value = data.customers || [];
+                    } catch(e) {
+                        console.error(e);
+                    }
+                }
+
+                async function openCustomerDossier(c) {
+                    if (!c || !c.id) return;
+                    try {
+                        const res = await fetchWithAuth(`/api/admin/customer/dossier?user_id=${c.id}`);
+                        const data = await res.json();
+                        if (data.ok) {
+                            selectedDossier.value = data.dossier;
+                            customerEditForm.value = { ...data.dossier.user };
+                            dossierTab.value = 'orders';
+                            loadDossierChat(c.id);
+                        }
+                    } catch (e) {
+                        alert("خطا در باز کردن پرونده مشتری.");
+                    }
+                }
+
+                async function loadDossierChat(userId) {
+                    dossierChatMessages.value = [];
+                    if (!selectedDossier.value?.support_threads?.length) return;
+                    const threadId = selectedDossier.value.support_threads[0].id;
+                    try {
+                        const res = await fetchWithAuth(`/api/admin/support/messages?thread_id=${threadId}`);
+                        const data = await res.json();
+                        if (data.ok) dossierChatMessages.value = data.messages || [];
+                    } catch(e) {}
+                }
+
+                async function sendDossierChatReply() {
+                    if (!dossierReplyText.value.trim() || !selectedDossier.value) return;
+                    isSendingDossierReply.value = true;
+                    try {
+                        const res = await fetchWithAuth('/api/admin/customer/direct-message', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                user_id: selectedDossier.value.user.id,
+                                telegram_id: selectedDossier.value.user.telegram_id,
+                                message: dossierReplyText.value.trim()
+                            })
+                        });
+                        const data = await res.json();
+                        if (data.ok) {
+                            dossierChatMessages.value.push({
+                                id: Date.now(),
+                                sender_role: 'OPERATOR',
+                                message_text: dossierReplyText.value.trim(),
+                                created_at: new Date().toISOString()
+                            });
+                            dossierReplyText.value = '';
+                        } else {
+                            alert(data.error || "خطا در ارسال پیام.");
+                        }
+                    } catch (e) {
+                        alert("خطا در برقراری ارتباط.");
+                    } finally {
+                        isSendingDossierReply.value = false;
+                    }
+                }
+
+                function openNewCustomerModal() {
+                    newCustomerForm.value = {
+                        full_name: '',
+                        phone_number: '',
+                        national_code: '',
+                        alien_code: '',
+                        telegram_id: '',
+                        username: '',
+                        notes: ''
+                    };
+                    newCustomerModal.value = true;
+                }
+
+                async function submitNewCustomer() {
+                    if (!newCustomerForm.value.full_name.trim()) return;
+                    isCreatingCustomer.value = true;
+                    try {
+                        const res = await fetchWithAuth('/api/admin/customer/create', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(newCustomerForm.value)
+                        });
+                        const data = await res.json();
+                        if (data.ok) {
+                            alert("✅ مشتری جدید با موفقیت ثبت شد.");
+                            newCustomerModal.value = false;
+                            fetchCustomers();
+                        } else {
+                            alert("خطا: " + (data.error || "امکان ثبت وجود ندارد."));
+                        }
+                    } catch(e) {
+                        alert("خطا در ثبت مشتری.");
+                    } finally {
+                        isCreatingCustomer.value = false;
+                    }
+                }
+
+                async function saveCustomerInfo() {
+                    if (!selectedDossier.value) return;
+                    isSavingCustomer.value = true;
+                    try {
+                        const res = await fetchWithAuth('/api/admin/customer/update', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ id: selectedDossier.value.user.id, ...customerEditForm.value })
+                        });
+                        const data = await res.json();
+                        if (data.ok) {
+                            alert("✅ مشخصات متقاضی به‌روز شد.");
+                            selectedDossier.value.user = { ...selectedDossier.value.user, ...customerEditForm.value };
+                            fetchCustomers();
+                        } else {
+                            alert(data.error || "خطا در ذخیره اطلاعات.");
+                        }
+                    } catch (e) {
+                        alert("خطای سرور.");
+                    } finally {
+                        isSavingCustomer.value = false;
+                    }
+                }
+
+                function openDirectMsgModal(c) {
+                    if (!c) return;
+                    directMsgTarget.value = c;
+                    directMsgText.value = '';
+                    directMsgModal.value = true;
+                }
+
+                async function submitDirectMsg() {
+                    if (!directMsgText.value.trim() || !directMsgTarget.value) return;
+                    isSendingDirectMsg.value = true;
+                    try {
+                        const res = await fetchWithAuth('/api/admin/customer/direct-message', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                user_id: directMsgTarget.value.id,
+                                telegram_id: directMsgTarget.value.telegram_id,
+                                message: directMsgText.value.trim()
+                            })
+                        });
+                        const data = await res.json();
+                        if (data.ok) {
+                            alert("✅ پیام تلگرام با موفقیت به مشتری ارسال شد.");
+                            directMsgModal.value = false;
+                        } else {
+                            alert("خطا: " + (data.error || "ارسال ناموفق بود."));
+                        }
+                    } catch (e) {
+                        alert("خطا در ارسال پیام مستقیم.");
+                    } finally {
+                        isSendingDirectMsg.value = false;
+                    }
+                }
+
+                // سفارشات
+                function openOrderDetail(ord) {
+                    selectedOrder.value = ord;
+                    newOrderStatus.value = ord.status;
+                    newOperatorNotes.value = ord.operator_notes || '';
+                }
+
+                async function updateOrderStatus() {
+                    if (!selectedOrder.value) return;
+                    isUpdatingStatus.value = true;
+                    try {
+                        const res = await fetchWithAuth('/api/admin/order/status', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                order_id: selectedOrder.value.id,
+                                status: newOrderStatus.value,
+                                notes: newOperatorNotes.value
+                            })
+                        });
+                        const data = await res.json();
+                        if (data.ok) {
+                            alert("✅ وضعیت سفارش با موفقیت بروز شد.");
+                            selectedOrder.value = null;
+                            refreshData();
+                        } else {
+                            alert(data.error || "خطا در بروزرسانی.");
+                        }
+                    } catch(e) {
+                        alert("خطا در ارتباط با سرور.");
+                    } finally {
+                        isUpdatingStatus.value = false;
+                    }
+                }
+
+                // خدمات و فرم‌ساز پویا
+                async function fetchServices() {
+                    try {
+                        const res = await fetchWithAuth('/api/admin/services');
+                        const data = await res.json();
+                        if (data.ok) {
+                            services.value = data.services || [];
+                            categories.value = data.categories || [];
+                        }
+                    } catch(e) {
+                        console.error(e);
+                    }
+                }
+
+                function openNewServiceModal() {
+                    serviceForm.value = {
+                        id: null,
+                        category_id: categories.value[0]?.id || 1,
+                        code: '',
+                        title: '',
+                        description: '',
+                        base_fee: 0,
+                        witness_fee: 3500000,
+                        order_priority: 0,
+                        is_active: 1
+                    };
+                    customFields.value = [];
+                    serviceModal.value = true;
+                }
+
+                function editService(s) {
+                    serviceForm.value = { ...s };
+                    customFields.value = [];
+                    if (s.required_fields && typeof s.required_fields === 'object') {
+                        customFields.value = Object.entries(s.required_fields).map(([k, v], idx) => ({
+                            id: idx + 1,
+                            name: k,
+                            label: typeof v === 'object' ? (v.label || k) : String(v),
+                            type: typeof v === 'object' ? (v.type || 'text') : 'text',
+                            required: typeof v === 'object' ? !!v.required : true
+                        }));
+                    }
+                    serviceModal.value = true;
+                }
+
+                function addCustomField() {
+                    customFields.value.push({
+                        id: Date.now(),
+                        name: 'field_' + (customFields.value.length + 1),
+                        label: 'فیلد جدید ' + (customFields.value.length + 1),
+                        type: 'text',
+                        required: true
+                    });
+                }
+
+                function removeCustomField(index) {
+                    customFields.value.splice(index, 1);
+                }
+
+                async function saveServiceWithFields() {
+                    if (!serviceForm.value.title.trim() || !serviceForm.value.code.trim()) {
+                        alert("عنوان و کد خدمت الزامی است.");
+                        return;
+                    }
+                    isSavingService.value = true;
+                    try {
+                        const fieldsObj = {};
+                        customFields.value.forEach(f => {
+                            fieldsObj[f.name || 'field'] = {
+                                label: f.label,
+                                type: f.type,
+                                required: f.required
+                            };
+                        });
+                        const payload = {
+                            ...serviceForm.value,
+                            required_fields: fieldsObj
+                        };
+                        const res = await fetchWithAuth('/api/admin/service/save', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(payload)
+                        });
+                        const data = await res.json();
+                        if (data.ok) {
+                            alert("✅ خدمت و فیلدهای فرم با موفقیت ذخیره شد.");
+                            serviceModal.value = false;
+                            fetchServices();
+                        } else {
+                            alert("خطا: " + (data.error || "عدم موفقیت در ذخیره"));
+                        }
+                    } catch(e) {
+                        alert("خطا در ذخیره خدمت.");
+                    } finally {
+                        isSavingService.value = false;
+                    }
+                }
+
+                async function toggleServiceActive(s) {
+                    s.is_active = s.is_active ? 0 : 1;
+                    await fetchWithAuth('/api/admin/service/toggle', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ service_id: s.id, is_active: s.is_active })
+                    });
+                }
+
+                // دسته‌بندی‌ها CRUD
+                function openCategoriesModal() {
+                    categoryForm.value = { id: null, code: '', title: '', description: '', order_priority: 0 };
+                    categoryModal.value = true;
+                }
+
+                function editCategory(cat) {
+                    categoryForm.value = { ...cat };
+                    categoryModal.value = true;
+                }
+
+                async function saveCategoryForm() {
+                    if (!categoryForm.value.title || !categoryForm.value.code) return;
+                    try {
+                        const res = await fetchWithAuth('/api/admin/category/save', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(categoryForm.value)
+                        });
+                        const data = await res.json();
+                        if (data.ok) {
+                            alert("✅ دسته‌بندی با موفقیت ذخیره شد.");
+                            categoryModal.value = false;
+                            fetchServices();
+                        } else {
+                            alert(data.error || "خطا در ذخیره.");
+                        }
+                    } catch(e) {
+                        alert("خطای سرور.");
+                    }
+                }
+
+                // کیف پول
+                async function fetchWallets() {
+                    try {
+                        const res = await fetchWithAuth('/api/admin/wallets');
+                        const data = await res.json();
+                        if (data.ok) wallets.value = data.wallets || [];
+                    } catch(e) {}
+                }
+
+                function openAdjustModal(w, u = null) {
+                    walletForm.value = {
+                        wallet_id: w?.id || null,
+                        user_id: u?.id || w?.user_id || null,
+                        customer_name: u?.full_name || w?.full_name || '',
+                        amount: 0,
+                        notes: ''
+                    };
+                    walletModal.value = true;
+                }
+
+                async function submitWalletAdjust() {
+                    if (!walletForm.value.amount || !walletForm.value.notes.trim()) {
+                        alert("مبلغ و شرح تراکنش الزامی هستند.");
+                        return;
+                    }
+                    isAdjustingWallet.value = true;
+                    try {
+                        const res = await fetchWithAuth('/api/admin/wallet/adjust', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(walletForm.value)
+                        });
+                        const data = await res.json();
+                        if (data.ok) {
+                            alert("✅ تراکنش مالی با موفقیت در کیف پول ثبت شد.");
+                            walletModal.value = false;
+                            fetchWallets();
+                            if (selectedDossier.value) openCustomerDossier(selectedDossier.value.user);
+                        } else {
+                            alert("خطا: " + (data.error || "عدم موفقیت"));
+                        }
+                    } catch(e) {
+                        alert("خطا در ارتباط.");
+                    } finally {
+                        isAdjustingWallet.value = false;
+                    }
+                }
+
+                async function toggleFreezeWallet(w) {
+                    const res = await fetchWithAuth('/api/admin/wallet/toggle-freeze', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ wallet_id: w.id })
+                    });
+                    const data = await res.json();
+                    if (data.ok) {
+                        w.is_frozen = data.is_frozen;
+                    }
+                }
+
+                // ثبت‌نام‌های مقطعی
+                async function fetchCampaigns() {
+                    try {
+                        const res = await fetchWithAuth('/api/admin/seasonal/campaigns');
+                        const data = await res.json();
+                        if (data.ok) seasonalCampaigns.value = data.campaigns || [];
+                    } catch(e) {}
+                }
+
+                function openNewCampaignModal() {
+                    campaignForm.value = { id: null, code: '', title: '', description: '', status: 'OPEN', is_active: 1 };
+                    campaignModal.value = true;
+                }
+
+                function editCampaign(c) {
+                    campaignForm.value = { ...c };
+                    campaignModal.value = true;
+                }
+
+                async function saveCampaignForm() {
+                    if (!campaignForm.value.title || !campaignForm.value.code) return;
+                    try {
+                        const res = await fetchWithAuth('/api/admin/seasonal/campaign', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(campaignForm.value)
+                        });
+                        const data = await res.json();
+                        if (data.ok) {
+                            alert("✅ رویداد مقطعی با موفقیت ذخیره شد.");
+                            campaignModal.value = false;
+                            fetchCampaigns();
+                        }
+                    } catch(e) {
+                        alert("خطا در ذخیره رویداد.");
+                    }
+                }
+
+                async function toggleSeasonalActive(c) {
+                    c.is_active = c.is_active ? 0 : 1;
+                    await fetchWithAuth('/api/admin/seasonal/status', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ campaign_id: c.id, is_active: c.is_active, status: c.status })
+                    });
+                }
+
+                function openBroadcastModal(c) {
+                    broadcastCampaign.value = c;
+                    broadcastMessage.value = '';
+                    broadcastModal.value = true;
+                }
+
+                async function submitBroadcast() {
+                    if (!broadcastMessage.value.trim() || !broadcastCampaign.value) return;
+                    isBroadcasting.value = true;
+                    try {
+                        const res = await fetchWithAuth('/api/admin/seasonal/broadcast', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                campaign_id: broadcastCampaign.value.id,
+                                message: broadcastMessage.value.trim()
+                            })
+                        });
+                        const data = await res.json();
+                        if (data.ok) {
+                            alert("✅ اطلاعیه عمومی به تمام متقاضیان ارسال شد.");
+                            broadcastModal.value = false;
+                        }
+                    } catch(e) {
+                        alert("خطا در ارسال برودکست.");
+                    } finally {
+                        isBroadcasting.value = false;
+                    }
+                }
+
+                // چت زنده پشتیبانی
+                async function fetchSupportThreads() {
+                    try {
+                        const res = await fetchWithAuth('/api/admin/support/threads?status=ALL');
+                        const data = await res.json();
+                        if (data.ok) {
+                            supportThreads.value = data.threads || [];
+                            if (!selectedThread.value && supportThreads.value.length > 0) {
+                                selectThread(supportThreads.value[0]);
+                            }
+                        }
+                    } catch(e) {}
+                }
+
+                async function selectThread(th) {
+                    selectedThread.value = th;
+                    try {
+                        const res = await fetchWithAuth(`/api/admin/support/messages?thread_id=${th.id}`);
+                        const data = await res.json();
+                        if (data.ok) threadMessages.value = data.messages || [];
+                    } catch(e) {}
+                }
+
+                async function sendSupportReply() {
+                    if (!supportReplyText.value.trim() || !selectedThread.value) return;
+                    isSendingReply.value = true;
+                    try {
+                        const res = await fetchWithAuth('/api/admin/support/reply', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                thread_id: selectedThread.value.id,
+                                telegram_id: selectedThread.value.telegram_id,
+                                message: supportReplyText.value.trim()
+                            })
+                        });
+                        const data = await res.json();
+                        if (data.ok) {
+                            threadMessages.value.push({
+                                id: Date.now(),
+                                sender_role: 'OPERATOR',
+                                message_text: supportReplyText.value.trim(),
+                                created_at: new Date().toISOString()
+                            });
+                            supportReplyText.value = '';
+                        }
+                    } catch(e) {
+                        alert("خطا در ارسال پاسخ.");
+                    } finally {
+                        isSendingReply.value = false;
+                    }
+                }
+
+                async function changeThreadStatus(threadId, status) {
+                    await fetchWithAuth('/api/admin/support/status', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ thread_id: threadId, status })
+                    });
+                }
+
+                // پایش سامانه‌ها
+                async function checkAllMonitorsNow() {
+                    isCheckingMonitors.value = true;
+                    try {
+                        const res = await fetchWithAuth('/api/admin/monitors/check-all', { method: 'POST' });
+                        const data = await res.json();
+                        if (data.ok) {
+                            alert(`✅ پایش بلادرنگ با موفقیت انجام شد (${data.count} سامانه بررسی گردید).`);
+                            const r = await fetchWithAuth('/api/admin/data');
+                            const d = await r.json();
+                            if (d.ok) websiteMonitors.value = d.monitors || [];
+                        }
+                    } catch(e) {
+                        alert("خطا در پایش سامانه‌ها.");
+                    } finally {
+                        isCheckingMonitors.value = false;
+                    }
+                }
+
+                function openNewMonitorModal() {
+                    monitorForm.value = { id: null, code: '', title: '', url: '', check_interval_minutes: 15, is_active: 1 };
+                    monitorModal.value = true;
+                }
+
+                function editMonitor(m) {
+                    monitorForm.value = { ...m };
+                    monitorModal.value = true;
+                }
+
+                async function saveMonitorForm() {
+                    if (!monitorForm.value.title || !monitorForm.value.url) return;
+                    try {
+                        const res = await fetchWithAuth('/api/admin/monitors/save', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(monitorForm.value)
+                        });
+                        const data = await res.json();
+                        if (data.ok) {
+                            alert("✅ سامانه پایش با موفقیت ذخیره شد.");
+                            monitorModal.value = false;
+                            const r = await fetchWithAuth('/api/admin/data');
+                            const d = await r.json();
+                            if (d.ok) websiteMonitors.value = d.monitors || [];
+                        }
+                    } catch(e) {
+                        alert("خطا در ذخیره سامانه.");
+                    }
+                }
+
+                // راه‌های ارتباطی
+                async function fetchChannels() {
+                    try {
+                        const res = await fetchWithAuth('/api/admin/channels');
+                        const data = await res.json();
+                        if (data.ok) communicationChannels.value = data.channels || [];
+                    } catch(e) {}
+                }
+
+                function openChannelEdit(ch) {
+                    channelForm.value = { ...ch };
+                    channelModal.value = true;
+                }
+
+                async function saveChannelForm() {
+                    try {
+                        const res = await fetchWithAuth('/api/admin/channel/update', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(channelForm.value)
+                        });
+                        const data = await res.json();
+                        if (data.ok) {
+                            channelModal.value = false;
+                            fetchChannels();
+                        }
+                    } catch(e) {}
+                }
+
+                async function toggleChannelActive(ch) {
+                    ch.is_active = ch.is_active ? 0 : 1;
+                    await fetchWithAuth('/api/admin/channel/toggle', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ id: ch.id, is_active: ch.is_active })
+                    });
+                }
+
+                // سطل زباله ۳۰ روزه (Soft Delete Trash)
+                async function softDeleteItem(table, id, title) {
+                    if (!confirm(`آیا از انتقال «${title}» به سطل زباله اطمینان دارید؟\nاین مورد تا ۳۰ روز در سطل زباله باقی می‌ماند و قابل بازگردانی است.`)) return;
+                    try {
+                        const res = await fetchWithAuth(`/api/admin/${table}/delete`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ id })
+                        });
+                        const data = await res.json();
+                        if (data.ok) {
+                            alert("🗑️ مورد با موفقیت به سطل زباله ۳۰ روزه منتقل شد.");
+                            if (selectedDossier.value) selectedDossier.value = null;
+                            if (selectedOrder.value) selectedOrder.value = null;
+                            refreshCurrentTab();
+                            fetchTrashItems();
+                        }
+                    } catch(e) {
+                        alert("خطا در حذف.");
+                    }
+                }
+
+                async function fetchTrashItems() {
+                    try {
+                        const res = await fetchWithAuth('/api/admin/trash/items');
+                        const data = await res.json();
+                        if (data.ok) trashItems.value = data.items || [];
+                    } catch(e) {}
+                }
+
+                async function restoreTrashItem(item) {
+                    try {
+                        const res = await fetchWithAuth('/api/admin/trash/restore', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ table: item.table, id: item.id })
+                        });
+                        const data = await res.json();
+                        if (data.ok) {
+                            alert("♻️ مورد با موفقیت به بخش اصلی بازیابی شد.");
+                            fetchTrashItems();
+                            refreshCurrentTab();
+                        }
+                    } catch(e) {
+                        alert("خطا در بازیابی.");
+                    }
+                }
+
+                async function purgeTrashItem(item) {
+                    if (!confirm(`هشدار: آیا از پاک‌سازی و حذف همیشگی این مورد اطمینان دارید؟ این عمل غیرقابل‌بازگشت است.`)) return;
+                    try {
+                        const res = await fetchWithAuth('/api/admin/trash/purge', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ table: item.table, id: item.id })
+                        });
+                        const data = await res.json();
+                        if (data.ok) {
+                            alert("⛔ مورد برای همیشه از دیتابیس پاک شد.");
+                            fetchTrashItems();
+                        }
+                    } catch(e) {
+                        alert("خطا در پاک‌سازی.");
+                    }
+                }
+
+                // پشتیبان‌گیری و خروجی اکسل
+                async function exportFullBackup() {
+                    isExportingBackup.value = true;
+                    try {
+                        const res = await fetchWithAuth('/api/admin/backup/export');
+                        if (!res.ok) throw new Error("Export failed");
+                        const blob = await res.blob();
+                        const url = window.URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = `limo_backup_${new Date().toISOString().slice(0, 10)}.json`;
+                        document.body.appendChild(a);
+                        a.click();
+                        a.remove();
+                    } catch(e) {
+                        alert("خطا در دانلود نسخه پشتیبان دیتابیس.");
+                    } finally {
+                        isExportingBackup.value = false;
+                    }
+                }
+
+                function exportCSV() {
+                    if (!orders.value.length) {
+                        alert("سفارشی جهت خروجی موجود نیست.");
+                        return;
+                    }
+                    let csvContent = "\uFEFFشناسه,کد رهگیری,مشتری,خدمت,وضعیت,تاریخ ثبت\n";
+                    orders.value.forEach(o => {
+                        csvContent += `"${o.id}","${o.tracking_code}","${o.full_name || ''}","${o.service_title || ''}","${statusLabel(o.status)}","${formatDate(o.created_at)}"\n`;
+                    });
+                    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+                    const url = URL.createObjectURL(blob);
+                    const link = document.createElement("a");
+                    link.setAttribute("href", url);
+                    link.setAttribute("download", `limo_orders_${new Date().toISOString().slice(0,10)}.csv`);
+                    document.body.appendChild(link);
+                    link.click();
+                    link.remove();
+                }
+
+                // تنظیمات کافی‌نت
+                async function fetchSettings() {
+                    try {
+                        const res = await fetchWithAuth('/api/admin/settings');
+                        const data = await res.json();
+                        if (data.ok && data.settings) {
+                            data.settings.forEach(s => {
+                                if (settingsForm.value[s.key] !== undefined) {
+                                    settingsForm.value[s.key] = s.value;
+                                }
+                            });
+                        }
+                    } catch(e) {}
+                }
+
+                async function saveShopSettings() {
+                    isSavingSettings.value = true;
+                    try {
+                        for (const [key, val] of Object.entries(settingsForm.value)) {
+                            await fetchWithAuth('/api/admin/setting/update', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ key, value: String(val) })
+                            });
+                        }
+                        alert("✅ تنظیمات کاربردی کافی‌نت با موفقیت ذخیره شد.");
+                    } catch(e) {
+                        alert("خطا در ذخیره تنظیمات.");
+                    } finally {
+                        isSavingSettings.value = false;
+                    }
+                }
+
+                // فرمت‌ها و برچسب‌های کمکی
+                function formatTomans(amount) {
+                    return (parseInt(amount, 10) || 0).toLocaleString('fa-IR') + ' تومان';
+                }
+
+                function formatDate(dateStr) {
+                    if (!dateStr) return '---';
+                    try {
+                        return new Date(dateStr).toLocaleString('fa-IR');
+                    } catch(e) {
+                        return dateStr;
+                    }
+                }
+
+                function tabTitle(tab) {
+                    const titles = {
+                        overview: 'پیشخوان آماری و نظارت آنلاین',
+                        orders: 'مدیریت سفارشات و پرونده‌های ثبتی',
+                        customers: 'مدیریت مشتریان و پرونده‌های هویتی (CRM)',
+                        services: 'فهرست خدمات و فرم‌ساز فیلدهای اختصاصی',
+                        categories: 'دسته‌بندی‌های خدمات کافی‌نت',
+                        wallets: 'کیف پول کاربران و دفاتر تراکنش‌های مالی',
+                        seasonal: 'ثبت‌نام‌های مقطعی، کنکور و آزمون‌ها',
+                        chats: 'مرکز گفتگوی زنده و تیکت‌های پشتیبانی',
+                        monitors: 'پایش هوشمند وضعیت و دسترس‌پذیری سامانه‌ها',
+                        channels: 'مدیریت راه‌های ارتباطی و تماس',
+                        trash: 'سطل زباله ۳۰ روزه و بایگانی امن',
+                        backup: 'پشتیبان‌گیری کامل از پایگاه داده و خروجی اکسل',
+                        settings: 'تنظیمات کاربردی و پل اتصال سیستم کافی‌نت'
+                    };
+                    return titles[tab] || 'داشبورد لیمو';
+                }
+
+                function statusBadgeClass(status) {
+                    const map = {
+                        PENDING: 'bg-amber-100 text-amber-800',
+                        APPROVED: 'bg-blue-100 text-blue-800',
+                        NEED_INFO: 'bg-purple-100 text-purple-800',
+                        COMPLETED: 'bg-emerald-100 text-emerald-800',
+                        REJECTED: 'bg-rose-100 text-rose-800'
+                    };
+                    return map[status] || 'bg-slate-100 text-slate-700';
+                }
+
+                function statusLabel(status) {
+                    const map = {
+                        PENDING: 'در انتظار بررسی',
+                        APPROVED: 'در حال انجام',
+                        NEED_INFO: 'نقص مدرک',
+                        COMPLETED: 'تکمیل شده',
+                        REJECTED: 'لغو شده'
+                    };
+                    return map[status] || status;
+                }
+
+                function supportStatusBadgeClass(st) {
+                    const map = {
+                        NEW: 'bg-amber-100 text-amber-800',
+                        PENDING_OPERATOR: 'bg-rose-100 text-rose-800',
+                        PENDING_CUSTOMER: 'bg-blue-100 text-blue-800',
+                        CLOSED: 'bg-slate-100 text-slate-600'
+                    };
+                    return map[st] || 'bg-slate-100 text-slate-700';
+                }
+
+                function supportStatusLabel(st) {
+                    const map = {
+                        NEW: 'جدید',
+                        PENDING_OPERATOR: 'در انتظار اپراتور',
+                        PENDING_CUSTOMER: 'در انتظار متقاضی',
+                        CLOSED: 'بسته شده'
+                    };
+                    return map[st] || st;
+                }
+
+                function seasonalBadgeClass(st) {
+                    const map = {
+                        COMING_SOON: 'bg-blue-100 text-blue-800',
+                        OPEN: 'bg-emerald-100 text-emerald-800',
+                        CLOSED: 'bg-slate-100 text-slate-600'
+                    };
+                    return map[st] || 'bg-slate-100 text-slate-700';
+                }
+
+                function seasonalStatusLabel(st) {
+                    const map = {
+                        COMING_SOON: 'به‌زودی',
+                        OPEN: 'ثبت‌نام فعال',
+                        CLOSED: 'پایان مهلت'
+                    };
+                    return map[st] || st;
+                }
+
+                function parseOrderData(formData) {
+                    if (!formData) return {};
+                    if (typeof formData === 'object') return formData;
+                    try { return JSON.parse(formData); } catch(e) { return { data: formData }; }
+                }
+
+                function formatFieldKey(key) {
+                    const dict = {
+                        fullName: 'نام و نام خانوادگی',
+                        phone: 'شماره همراه',
+                        nationalCode: 'کد ملی',
+                        alienCode: 'کد فراگیر اتباع',
+                        studentId: 'شماره دانشجویی',
+                        postalCode: 'کد پستی',
+                        address: 'نشانی سکونت',
+                        witnessChoice: 'گزینه تأمین شاهد',
+                        witness1Name: 'نام شاهد اول',
+                        witness1Nid: 'کدملی شاهد اول',
+                        witness1Phone: 'موبایل شاهد اول',
+                        witness2Name: 'نام شاهد دوم',
+                        witness2Nid: 'کدملی شاهد دوم',
+                        witness2Phone: 'موبایل شاهد دوم'
+                    };
+                    return dict[key] || key;
+                }
+
+                onMounted(() => {
+                    const token = localStorage.getItem('limo_admin_token');
+                    if (token) {
+                        isAuthenticated.value = true;
+                        adminUser.value.username = localStorage.getItem('limo_admin_username') || 'admin';
+                        refreshData();
+                    }
+                });
+
+                return {
+                    isAuthenticated,
+                    adminUser,
+                    loginUsername,
+                    loginPassword,
+                    loginError,
+                    isLoggingIn,
+                    login,
+                    logout,
+                    currentTab,
+                    mobileSidebarOpen,
+                    isLoading,
+                    stats,
+                    orders,
+                    customers,
+                    services,
+                    categories,
+                    wallets,
+                    seasonalCampaigns,
+                    supportThreads,
+                    communicationChannels,
+                    websiteMonitors,
+                    trashItems,
+                    orderStatusFilter,
+                    orderSearchQuery,
+                    customerSearchQuery,
+                    serviceCategoryFilter,
+                    pendingCount,
+                    pendingSupportCount,
+                    filteredOrders,
+                    filteredServices,
+                    switchTab,
+                    refreshCurrentTab,
+                    debouncedFetchCustomers,
+                    fetchCustomers,
+                    openCustomerDossier,
+                    selectedDossier,
+                    dossierTab,
+                    dossierChatMessages,
+                    dossierReplyText,
+                    isSendingDossierReply,
+                    sendDossierChatReply,
+                    customerEditForm,
+                    isSavingCustomer,
+                    saveCustomerInfo,
+                    openNewCustomerModal,
+                    newCustomerModal,
+                    newCustomerForm,
+                    isCreatingCustomer,
+                    submitNewCustomer,
+                    openDirectMsgModal,
+                    directMsgModal,
+                    directMsgTarget,
+                    directMsgText,
+                    isSendingDirectMsg,
+                    submitDirectMsg,
+                    openOrderDetail,
+                    selectedOrder,
+                    newOrderStatus,
+                    newOperatorNotes,
+                    isUpdatingStatus,
+                    updateOrderStatus,
+                    openNewServiceModal,
+                    editService,
+                    serviceModal,
+                    serviceForm,
+                    customFields,
+                    addCustomField,
+                    removeCustomField,
+                    saveServiceWithFields,
+                    isSavingService,
+                    toggleServiceActive,
+                    openCategoriesModal,
+                    editCategory,
+                    categoryModal,
+                    categoryForm,
+                    saveCategoryForm,
+                    openAdjustModal,
+                    walletModal,
+                    walletForm,
+                    isAdjustingWallet,
+                    submitWalletAdjust,
+                    toggleFreezeWallet,
+                    openNewCampaignModal,
+                    editCampaign,
+                    campaignModal,
+                    campaignForm,
+                    saveCampaignForm,
+                    toggleSeasonalActive,
+                    openBroadcastModal,
+                    broadcastModal,
+                    broadcastCampaign,
+                    broadcastMessage,
+                    isBroadcasting,
+                    submitBroadcast,
+                    selectThread,
+                    selectedThread,
+                    threadMessages,
+                    supportReplyText,
+                    isSendingReply,
+                    sendSupportReply,
+                    changeThreadStatus,
+                    checkAllMonitorsNow,
+                    isCheckingMonitors,
+                    openNewMonitorModal,
+                    editMonitor,
+                    monitorModal,
+                    monitorForm,
+                    saveMonitorForm,
+                    openChannelEdit,
+                    channelModal,
+                    channelForm,
+                    saveChannelForm,
+                    toggleChannelActive,
+                    softDeleteItem,
+                    fetchTrashItems,
+                    restoreTrashItem,
+                    purgeTrashItem,
+                    exportFullBackup,
+                    isExportingBackup,
+                    exportCSV,
+                    settingsForm,
+                    isSavingSettings,
+                    saveShopSettings,
+                    formatTomans,
+                    formatDate,
+                    tabTitle,
+                    statusBadgeClass,
+                    statusLabel,
+                    supportStatusBadgeClass,
+                    supportStatusLabel,
+                    seasonalBadgeClass,
+                    seasonalStatusLabel,
+                    parseOrderData,
+                    formatFieldKey
+                };
+            }
+        }).mount('#admin-app');
+    </script>
+</body>
+</html>'''

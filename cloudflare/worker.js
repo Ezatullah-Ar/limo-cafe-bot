@@ -1469,6 +1469,34 @@ export default {
           VALUES (?, ?, 'NONE', 'PENDING', 'ثبت اولیه پرونده توسط متقاضی از پیشخوان مینی‌اپلیکیشن')
         `).bind(orderId, telegramId || 0).run();
 
+        // ارسال همگام و بلادرنگ سفارش به نرم‌افزار کافی‌نت (Shop Sync Bridge)
+        try {
+          const syncSetting = await db.prepare("SELECT value FROM system_settings WHERE key = 'shop_sync_enabled'").first();
+          if (syncSetting?.value === '1') {
+            const urlSetting = await db.prepare("SELECT value FROM system_settings WHERE key = 'shop_sync_url'").first();
+            if (urlSetting?.value) {
+              ctx.waitUntil(
+                fetch(urlSetting.value, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    event: 'new_order',
+                    tracking_code: trackingCode,
+                    service_id: serviceId,
+                    service_title: serviceTitle,
+                    customer_name: fullName,
+                    phone_number: phoneNumber,
+                    form_data: formData,
+                    timestamp: new Date().toISOString()
+                  })
+                }).catch(err => console.error('Shop sync error:', err))
+              );
+            }
+          }
+        } catch (syncErr) {
+          console.error("Shop sync check error:", syncErr);
+        }
+
         // ۶. اعلان آنی به ادمین در تلگرام در صورت تنظیم بودن
         if (botToken && adminId) {
           ctx.waitUntil(
@@ -1869,12 +1897,12 @@ export default {
       let monitors = [];
       if (db) {
         try {
-          const totOrd = await db.prepare("SELECT COUNT(*) as c FROM orders").first();
-          const pendOrd = await db.prepare("SELECT COUNT(*) as c FROM orders WHERE status = 'PENDING'").first();
-          const appOrd = await db.prepare("SELECT COUNT(*) as c FROM orders WHERE status = 'APPROVED'").first();
-          const needOrd = await db.prepare("SELECT COUNT(*) as c FROM orders WHERE status = 'NEED_INFO'").first();
-          const compOrd = await db.prepare("SELECT COUNT(*) as c FROM orders WHERE status = 'COMPLETED'").first();
-          const totUsers = await db.prepare("SELECT COUNT(*) as c FROM users").first();
+          const totOrd = await db.prepare("SELECT COUNT(*) as c FROM orders WHERE deleted_at IS NULL").first();
+          const pendOrd = await db.prepare("SELECT COUNT(*) as c FROM orders WHERE status = 'PENDING' AND deleted_at IS NULL").first();
+          const appOrd = await db.prepare("SELECT COUNT(*) as c FROM orders WHERE status = 'APPROVED' AND deleted_at IS NULL").first();
+          const needOrd = await db.prepare("SELECT COUNT(*) as c FROM orders WHERE status = 'NEED_INFO' AND deleted_at IS NULL").first();
+          const compOrd = await db.prepare("SELECT COUNT(*) as c FROM orders WHERE status = 'COMPLETED' AND deleted_at IS NULL").first();
+          const totUsers = await db.prepare("SELECT COUNT(*) as c FROM users WHERE deleted_at IS NULL").first();
           stats = {
             total_orders: totOrd?.c || 0,
             pending_orders: pendOrd?.c || 0,
@@ -1888,10 +1916,11 @@ export default {
             FROM orders o
             LEFT JOIN users u ON o.user_id = u.id
             LEFT JOIN service_items s ON o.service_id = s.id
+            WHERE o.deleted_at IS NULL
             ORDER BY o.id DESC LIMIT 200
           `).all();
           orders = ordRes.results || [];
-          const monRes = await db.prepare("SELECT * FROM website_monitors").all();
+          const monRes = await db.prepare("SELECT * FROM website_monitors WHERE deleted_at IS NULL").all();
           monitors = (monRes.results || []).map(m => ({
             id: m.id,
             code: m.code,
@@ -2191,7 +2220,7 @@ export default {
       let campaigns = [];
       if (db) {
         try {
-          const res = await db.prepare("SELECT * FROM seasonal_campaigns ORDER BY created_at DESC").all();
+          const res = await db.prepare("SELECT * FROM seasonal_campaigns WHERE deleted_at IS NULL ORDER BY created_at DESC").all();
           const now = new Date();
           campaigns = (res.results || []).map(c => {
             let dynamicStatus = c.status;
@@ -2428,6 +2457,7 @@ export default {
               (SELECT COUNT(*) FROM wallet_transactions wt WHERE wt.wallet_id = w.id) as tx_count
             FROM wallets w
             JOIN users u ON w.user_id = u.id
+            WHERE u.deleted_at IS NULL
             ORDER BY w.updated_at DESC
           `).all();
           wallets = res.results || [];
@@ -2478,13 +2508,22 @@ export default {
       }
       const db = env.DB;
       const body = await request.json();
-      const { wallet_id, amount, notes, type } = body;
+      let { wallet_id, user_id, amount, notes, type } = body;
       const adjAmount = parseInt(amount || 0, 10);
 
-      if (!wallet_id || adjAmount === 0 || !notes) {
-        return new Response(JSON.stringify({ ok: false, error: "شناسه کیف پول، مبلغ و شرح تراکنش الزامی هستند." }), {
+      if ((!wallet_id && !user_id) || adjAmount === 0 || !notes) {
+        return new Response(JSON.stringify({ ok: false, error: "شناسه مشتری یا کیف پول، مبلغ و شرح تراکنش الزامی هستند." }), {
           status: 400, headers: { "Content-Type": "application/json" }
         });
+      }
+
+      if (db && !wallet_id && user_id) {
+        let existingW = await db.prepare("SELECT id FROM wallets WHERE user_id = ?").bind(user_id).first();
+        if (!existingW) {
+          await db.prepare("INSERT INTO wallets (user_id, balance) VALUES (?, 0)").bind(user_id).run();
+          existingW = await db.prepare("SELECT id FROM wallets WHERE user_id = ?").bind(user_id).first();
+        }
+        wallet_id = existingW?.id;
       }
 
       if (db) {
@@ -2584,17 +2623,18 @@ export default {
       if (db) {
         try {
           let sql = `
-            SELECT u.id, u.telegram_id, u.full_name, u.username, u.role, u.created_at,
-                   (SELECT COUNT(*) FROM orders o WHERE o.user_id = u.id) as order_count,
-                   (SELECT COUNT(*) FROM orders o WHERE o.user_id = u.id AND o.status IN ('PENDING', 'APPROVED', 'NEED_INFO')) as active_orders_count,
+            SELECT u.id, u.telegram_id, u.full_name, u.username, u.phone_number, u.national_code, u.alien_code, u.notes, u.role, u.created_at,
+                   (SELECT COUNT(*) FROM orders o WHERE o.user_id = u.id AND o.deleted_at IS NULL) as order_count,
+                   (SELECT COUNT(*) FROM orders o WHERE o.user_id = u.id AND o.status IN ('PENDING', 'APPROVED', 'NEED_INFO') AND o.deleted_at IS NULL) as active_orders_count,
                    (SELECT COALESCE(balance, 0) FROM wallets w WHERE w.user_id = u.id) as wallet_balance,
                    (SELECT COUNT(*) FROM support_threads st WHERE st.user_id = u.id AND st.status != 'CLOSED') as open_tickets_count
             FROM users u
+            WHERE u.deleted_at IS NULL
           `;
           const params = [];
           if (q) {
-            sql += ` WHERE u.full_name LIKE ? OR u.username LIKE ? OR CAST(u.telegram_id AS TEXT) LIKE ? `;
-            params.push(`%${q}%`, `%${q}%`, `%${q}%`);
+            sql += ` AND (u.full_name LIKE ? OR u.username LIKE ? OR CAST(u.telegram_id AS TEXT) LIKE ? OR u.phone_number LIKE ?) `;
+            params.push(`%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`);
           }
           sql += ` ORDER BY u.id DESC LIMIT 100`;
           const res = await db.prepare(sql).bind(...params).all();
@@ -2623,7 +2663,7 @@ export default {
         });
       }
       try {
-        const user = await db.prepare("SELECT id, telegram_id, full_name, username, role, created_at FROM users WHERE id = ?")
+        const user = await db.prepare("SELECT id, telegram_id, full_name, username, phone_number, national_code, alien_code, notes, role, created_at FROM users WHERE id = ?")
           .bind(userId).first();
         if (!user) {
           return new Response(JSON.stringify({ ok: false, error: "مشتری یافت نشد." }), {
@@ -2637,7 +2677,7 @@ export default {
           SELECT o.*, s.title as service_title, s.code as service_code
           FROM orders o
           LEFT JOIN service_items s ON o.service_id = s.id
-          WHERE o.user_id = ?
+          WHERE o.user_id = ? AND o.deleted_at IS NULL
           ORDER BY o.id DESC
         `).bind(userId).all();
         const orders = (ordersRes.results || []).map(o => {
@@ -2751,12 +2791,13 @@ export default {
       let services = [];
       if (db) {
         try {
-          const catRes = await db.prepare("SELECT * FROM service_categories ORDER BY order_priority ASC").all();
+          const catRes = await db.prepare("SELECT * FROM service_categories WHERE deleted_at IS NULL ORDER BY order_priority ASC").all();
           categories = catRes.results || [];
           const svcRes = await db.prepare(`
             SELECT s.*, c.title as category_title
             FROM service_items s
             LEFT JOIN service_categories c ON s.category_id = c.id
+            WHERE s.deleted_at IS NULL
             ORDER BY c.order_priority, s.order_priority
           `).all();
           services = (svcRes.results || []).map(s => {
@@ -2819,6 +2860,10 @@ export default {
       const prioNum = parseInt(order_priority || 0, 10);
       const activeInt = (is_active === false || is_active === 0) ? 0 : 1;
       const catId = category_id ? parseInt(category_id, 10) : 1;
+
+      if (body.witness_fee !== undefined && db) {
+        await db.prepare("INSERT OR REPLACE INTO system_settings (key, value, updated_at) VALUES ('witness_provision_fee', ?, CURRENT_TIMESTAMP)").bind(String(body.witness_fee)).run().catch(() => {});
+      }
 
       try {
         if (id) {
@@ -2969,7 +3014,7 @@ export default {
       let campaigns = [];
       if (db) {
         try {
-          const res = await db.prepare("SELECT * FROM seasonal_campaigns WHERE is_active = 1 ORDER BY start_at ASC").all();
+          const res = await db.prepare("SELECT * FROM seasonal_campaigns WHERE is_active = 1 AND deleted_at IS NULL ORDER BY start_at ASC").all();
           const now = new Date();
           campaigns = (res.results || []).map(c => {
             let dynamicStatus = c.status;
@@ -3102,7 +3147,7 @@ export default {
       let channels = [];
       if (db) {
         try {
-          const res = await db.prepare("SELECT * FROM communication_channels ORDER BY order_priority ASC").all();
+          const res = await db.prepare("SELECT * FROM communication_channels WHERE deleted_at IS NULL ORDER BY order_priority ASC").all();
           channels = res.results || [];
         } catch (e) {
           console.error("Error fetching channels:", e);
@@ -3183,6 +3228,477 @@ export default {
     }
 
     // ۲۵. دریافت لاگ‌های حسابرسی سیستم (System Audit Logs)
+
+    // ========================================================
+    // ماژول جامع سطل زباله ۳۰ روزه (Soft Delete Trash Management)
+    // ========================================================
+    if (reqUrl.pathname === "/api/admin/trash/items") {
+      if (!checkAdminAuth(request, env)) {
+        return new Response(JSON.stringify({ ok: false, error: "Unauthorized" }), {
+          status: 401, headers: { "Content-Type": "application/json" }
+        });
+      }
+      const db = env.DB;
+      const items = [];
+      if (db) {
+        try {
+          // حذف خودکار مواردی که بیش از ۳۰ روز از حذف نرم‌افزاری آن‌ها گذشته است
+          await db.prepare("DELETE FROM orders WHERE deleted_at IS NOT NULL AND julianday('now') - julianday(deleted_at) > 30").run().catch(() => {});
+          await db.prepare("DELETE FROM users WHERE deleted_at IS NOT NULL AND julianday('now') - julianday(deleted_at) > 30").run().catch(() => {});
+          await db.prepare("DELETE FROM service_items WHERE deleted_at IS NOT NULL AND julianday('now') - julianday(deleted_at) > 30").run().catch(() => {});
+          await db.prepare("DELETE FROM service_categories WHERE deleted_at IS NOT NULL AND julianday('now') - julianday(deleted_at) > 30").run().catch(() => {});
+          await db.prepare("DELETE FROM seasonal_campaigns WHERE deleted_at IS NOT NULL AND julianday('now') - julianday(deleted_at) > 30").run().catch(() => {});
+          await db.prepare("DELETE FROM communication_channels WHERE deleted_at IS NOT NULL AND julianday('now') - julianday(deleted_at) > 30").run().catch(() => {});
+          await db.prepare("DELETE FROM website_monitors WHERE deleted_at IS NOT NULL AND julianday('now') - julianday(deleted_at) > 30").run().catch(() => {});
+
+          // ۱. سفارشات حذف شده
+          const delOrders = await db.prepare("SELECT id, tracking_code as code, status as subtitle, deleted_at FROM orders WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC").all();
+          (delOrders.results || []).forEach(r => {
+            const daysPassed = Math.floor((Date.now() - new Date(r.deleted_at).getTime()) / (86400000));
+            items.push({ id: r.id, table: 'order', type_label: 'سفارش', title: `سفارش #${r.id}`, code: r.code, subtitle: `وضعیت: ${r.subtitle}`, deleted_at: r.deleted_at, days_left: Math.max(0, 30 - daysPassed) });
+          });
+
+          // ۲. مشتریان حذف شده
+          const delUsers = await db.prepare("SELECT id, full_name as title, username as code, phone_number as subtitle, deleted_at FROM users WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC").all();
+          (delUsers.results || []).forEach(r => {
+            const daysPassed = Math.floor((Date.now() - new Date(r.deleted_at).getTime()) / (86400000));
+            items.push({ id: r.id, table: 'user', type_label: 'مشتری', title: r.title, code: r.code ? `@${r.code}` : `شناسه ${r.id}`, subtitle: r.subtitle || 'بدون شماره', deleted_at: r.deleted_at, days_left: Math.max(0, 30 - daysPassed) });
+          });
+
+          // ۳. خدمات حذف شده
+          const delServices = await db.prepare("SELECT id, title, code, deleted_at FROM service_items WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC").all();
+          (delServices.results || []).forEach(r => {
+            const daysPassed = Math.floor((Date.now() - new Date(r.deleted_at).getTime()) / (86400000));
+            items.push({ id: r.id, table: 'service', type_label: 'خدمت', title: r.title, code: r.code, subtitle: 'خدمات کافی‌نت', deleted_at: r.deleted_at, days_left: Math.max(0, 30 - daysPassed) });
+          });
+
+          // ۴. دسته‌بندی‌های حذف شده
+          const delCats = await db.prepare("SELECT id, title, code, deleted_at FROM service_categories WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC").all();
+          (delCats.results || []).forEach(r => {
+            const daysPassed = Math.floor((Date.now() - new Date(r.deleted_at).getTime()) / (86400000));
+            items.push({ id: r.id, table: 'category', type_label: 'دسته‌بندی', title: r.title, code: r.code, subtitle: 'دسته‌بندی خدمات', deleted_at: r.deleted_at, days_left: Math.max(0, 30 - daysPassed) });
+          });
+
+          // ۵. ثبت‌نام‌های مقطعی حذف شده
+          const delCampaigns = await db.prepare("SELECT id, title, code, deleted_at FROM seasonal_campaigns WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC").all();
+          (delCampaigns.results || []).forEach(r => {
+            const daysPassed = Math.floor((Date.now() - new Date(r.deleted_at).getTime()) / (86400000));
+            items.push({ id: r.id, table: 'campaign', type_label: 'ثبت‌نام مقطعی', title: r.title, code: r.code, subtitle: 'اطلاع‌رسانی فصلی', deleted_at: r.deleted_at, days_left: Math.max(0, 30 - daysPassed) });
+          });
+
+          // ۶. کانال‌های ارتباطی حذف شده
+          const delChannels = await db.prepare("SELECT id, title, key as code, value as subtitle, deleted_at FROM communication_channels WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC").all();
+          (delChannels.results || []).forEach(r => {
+            const daysPassed = Math.floor((Date.now() - new Date(r.deleted_at).getTime()) / (86400000));
+            items.push({ id: r.id, table: 'channel', type_label: 'کانال ارتباطی', title: r.title, code: r.code, subtitle: r.subtitle || '', deleted_at: r.deleted_at, days_left: Math.max(0, 30 - daysPassed) });
+          });
+
+          // ۷. مانیتورهای سایت حذف شده
+          const delMonitors = await db.prepare("SELECT id, title, code, url as subtitle, deleted_at FROM website_monitors WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC").all();
+          (delMonitors.results || []).forEach(r => {
+            const daysPassed = Math.floor((Date.now() - new Date(r.deleted_at).getTime()) / (86400000));
+            items.push({ id: r.id, table: 'monitor', type_label: 'پایش سامانه', title: r.title, code: r.code, subtitle: r.subtitle, deleted_at: r.deleted_at, days_left: Math.max(0, 30 - daysPassed) });
+          });
+        } catch (e) {
+          console.error("Error fetching trash items:", e);
+        }
+      }
+      return new Response(JSON.stringify({ ok: true, items }), {
+        headers: { "Content-Type": "application/json" }
+      });
+    }
+
+    // بازیابی آیتم از سطل زباله (Restore)
+    if (reqUrl.pathname === "/api/admin/trash/restore" && request.method === "POST") {
+      if (!checkAdminAuth(request, env)) {
+        return new Response(JSON.stringify({ ok: false, error: "Unauthorized" }), {
+          status: 401, headers: { "Content-Type": "application/json" }
+        });
+      }
+      const db = env.DB;
+      const { table, id } = await request.json();
+      const tableMap = {
+        order: 'orders',
+        user: 'users',
+        service: 'service_items',
+        category: 'service_categories',
+        campaign: 'seasonal_campaigns',
+        channel: 'communication_channels',
+        monitor: 'website_monitors'
+      };
+      const sqlTable = tableMap[table];
+      if (!sqlTable || !id) {
+        return new Response(JSON.stringify({ ok: false, error: "نوع جدول یا شناسه نامعتبر است." }), { status: 400, headers: { "Content-Type": "application/json" } });
+      }
+      if (db) {
+        await db.prepare(`UPDATE ${sqlTable} SET deleted_at = NULL WHERE id = ?`).bind(id).run();
+      }
+      return new Response(JSON.stringify({ ok: true, message: "مورد با موفقیت بازیابی شد." }), { headers: { "Content-Type": "application/json" } });
+    }
+
+    // حذف دائمی آیتم از سطل زباله (Permanent Purge)
+    if (reqUrl.pathname === "/api/admin/trash/purge" && request.method === "POST") {
+      if (!checkAdminAuth(request, env)) {
+        return new Response(JSON.stringify({ ok: false, error: "Unauthorized" }), {
+          status: 401, headers: { "Content-Type": "application/json" }
+        });
+      }
+      const db = env.DB;
+      const { table, id } = await request.json();
+      const tableMap = {
+        order: 'orders',
+        user: 'users',
+        service: 'service_items',
+        category: 'service_categories',
+        campaign: 'seasonal_campaigns',
+        channel: 'communication_channels',
+        monitor: 'website_monitors'
+      };
+      const sqlTable = tableMap[table];
+      if (!sqlTable || !id) {
+        return new Response(JSON.stringify({ ok: false, error: "نوع جدول یا شناسه نامعتبر است." }), { status: 400, headers: { "Content-Type": "application/json" } });
+      }
+      if (db) {
+        await db.prepare(`DELETE FROM ${sqlTable} WHERE id = ?`).bind(id).run();
+      }
+      return new Response(JSON.stringify({ ok: true, message: "مورد برای همیشه حذف شد." }), { headers: { "Content-Type": "application/json" } });
+    }
+
+    // اندپوینت‌های حذف نرم‌افزاری (Soft Delete Handlers)
+    if (reqUrl.pathname === "/api/admin/order/delete" && request.method === "POST") {
+      if (!checkAdminAuth(request, env)) return new Response(JSON.stringify({ ok: false, error: "Unauthorized" }), { status: 401, headers: { "Content-Type": "application/json" } });
+      const { id } = await request.json();
+      if (env.DB && id) await env.DB.prepare("UPDATE orders SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?").bind(id).run();
+      return new Response(JSON.stringify({ ok: true }), { headers: { "Content-Type": "application/json" } });
+    }
+
+    if (reqUrl.pathname === "/api/admin/customer/delete" && request.method === "POST") {
+      if (!checkAdminAuth(request, env)) return new Response(JSON.stringify({ ok: false, error: "Unauthorized" }), { status: 401, headers: { "Content-Type": "application/json" } });
+      const { id } = await request.json();
+      if (env.DB && id) await env.DB.prepare("UPDATE users SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?").bind(id).run();
+      return new Response(JSON.stringify({ ok: true }), { headers: { "Content-Type": "application/json" } });
+    }
+
+    if (reqUrl.pathname === "/api/admin/service/delete" && request.method === "POST") {
+      if (!checkAdminAuth(request, env)) return new Response(JSON.stringify({ ok: false, error: "Unauthorized" }), { status: 401, headers: { "Content-Type": "application/json" } });
+      const { id } = await request.json();
+      if (env.DB && id) await env.DB.prepare("UPDATE service_items SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?").bind(id).run();
+      return new Response(JSON.stringify({ ok: true }), { headers: { "Content-Type": "application/json" } });
+    }
+
+    if (reqUrl.pathname === "/api/admin/category/delete" && request.method === "POST") {
+      if (!checkAdminAuth(request, env)) return new Response(JSON.stringify({ ok: false, error: "Unauthorized" }), { status: 401, headers: { "Content-Type": "application/json" } });
+      const { id } = await request.json();
+      if (env.DB && id) await env.DB.prepare("UPDATE service_categories SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?").bind(id).run();
+      return new Response(JSON.stringify({ ok: true }), { headers: { "Content-Type": "application/json" } });
+    }
+
+    if (reqUrl.pathname === "/api/admin/seasonal/delete" && request.method === "POST") {
+      if (!checkAdminAuth(request, env)) return new Response(JSON.stringify({ ok: false, error: "Unauthorized" }), { status: 401, headers: { "Content-Type": "application/json" } });
+      const { id } = await request.json();
+      if (env.DB && id) await env.DB.prepare("UPDATE seasonal_campaigns SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?").bind(id).run();
+      return new Response(JSON.stringify({ ok: true }), { headers: { "Content-Type": "application/json" } });
+    }
+
+    if (reqUrl.pathname === "/api/admin/channel/delete" && request.method === "POST") {
+      if (!checkAdminAuth(request, env)) return new Response(JSON.stringify({ ok: false, error: "Unauthorized" }), { status: 401, headers: { "Content-Type": "application/json" } });
+      const { id } = await request.json();
+      if (env.DB && id) await env.DB.prepare("UPDATE communication_channels SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?").bind(id).run();
+      return new Response(JSON.stringify({ ok: true }), { headers: { "Content-Type": "application/json" } });
+    }
+
+    if (reqUrl.pathname === "/api/admin/monitors/delete" && request.method === "POST") {
+      if (!checkAdminAuth(request, env)) return new Response(JSON.stringify({ ok: false, error: "Unauthorized" }), { status: 401, headers: { "Content-Type": "application/json" } });
+      const { id } = await request.json();
+      if (env.DB && id) await env.DB.prepare("UPDATE website_monitors SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?").bind(id).run();
+      return new Response(JSON.stringify({ ok: true }), { headers: { "Content-Type": "application/json" } });
+    }
+
+    // ========================================================
+    // ایجاد و ویرایش دستی مشتری (Customer CRM Manual Create & Edit)
+    // ========================================================
+    if (reqUrl.pathname === "/api/admin/customer/create" && request.method === "POST") {
+      if (!checkAdminAuth(request, env)) return new Response(JSON.stringify({ ok: false, error: "Unauthorized" }), { status: 401, headers: { "Content-Type": "application/json" } });
+      const db = env.DB;
+      const body = await request.json();
+      const { full_name, phone_number, national_code, alien_code, telegram_id, username, notes } = body;
+
+      if (!full_name || !full_name.trim()) {
+        return new Response(JSON.stringify({ ok: false, error: "نام و نام خانوادگی مشتری الزامی است." }), { status: 400, headers: { "Content-Type": "application/json" } });
+      }
+
+      let tgId = telegram_id ? parseInt(telegram_id, 10) : null;
+      if (!tgId || isNaN(tgId)) {
+        // ایجاد شناسه یکتا برای مشتری بدون تلگرام
+        tgId = -1 * (Math.floor(Date.now() / 1000) % 1000000000 + Math.floor(Math.random() * 1000));
+      }
+
+      if (db) {
+        try {
+          const existing = await db.prepare("SELECT id FROM users WHERE telegram_id = ?").bind(tgId).first();
+          if (existing) {
+            return new Response(JSON.stringify({ ok: false, error: "مشتری با این شناسه تلگرام قبلاً ثبت شده است." }), { status: 400, headers: { "Content-Type": "application/json" } });
+          }
+          const ins = await db.prepare(`
+            INSERT INTO users (telegram_id, full_name, username, phone_number, national_code, alien_code, notes, role)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 'CUSTOMER')
+          `).bind(tgId, full_name.trim(), username ? username.replace(/^@/, '').trim() : null, phone_number || null, national_code || null, alien_code || null, notes || null).run();
+
+          const newId = ins?.meta?.last_row_id;
+          if (newId) {
+            await db.prepare("INSERT OR IGNORE INTO wallets (user_id, balance) VALUES (?, 0)").bind(newId).run();
+          }
+          return new Response(JSON.stringify({ ok: true, id: newId, message: "مشتری جدید با موفقیت ایجاد شد." }), { headers: { "Content-Type": "application/json" } });
+        } catch (e) {
+          console.error("Error creating customer:", e);
+          return new Response(JSON.stringify({ ok: false, error: e.message }), { status: 500, headers: { "Content-Type": "application/json" } });
+        }
+      }
+      return new Response(JSON.stringify({ ok: false, error: "Database unavailable" }), { status: 500, headers: { "Content-Type": "application/json" } });
+    }
+
+    if (reqUrl.pathname === "/api/admin/customer/update" && request.method === "POST") {
+      if (!checkAdminAuth(request, env)) return new Response(JSON.stringify({ ok: false, error: "Unauthorized" }), { status: 401, headers: { "Content-Type": "application/json" } });
+      const db = env.DB;
+      const body = await request.json();
+      const { id, full_name, phone_number, national_code, alien_code, username, notes } = body;
+      if (!id || !full_name) {
+        return new Response(JSON.stringify({ ok: false, error: "شناسه و نام الزامی است." }), { status: 400, headers: { "Content-Type": "application/json" } });
+      }
+      if (db) {
+        await db.prepare(`
+          UPDATE users
+          SET full_name = ?, phone_number = ?, national_code = ?, alien_code = ?, username = ?, notes = ?, updated_at = CURRENT_TIMESTAMP
+          WHERE id = ?
+        `).bind(full_name.trim(), phone_number || null, national_code || null, alien_code || null, username ? username.replace(/^@/, '').trim() : null, notes || null, id).run();
+      }
+      return new Response(JSON.stringify({ ok: true, message: "اطلاعات مشتری به‌روز شد." }), { headers: { "Content-Type": "application/json" } });
+    }
+
+    // ارسال مستقیم پیام به پی‌وی تلگرام مشتری از طریق ربات
+    if (reqUrl.pathname === "/api/admin/customer/direct-message" && request.method === "POST") {
+      if (!checkAdminAuth(request, env)) return new Response(JSON.stringify({ ok: false, error: "Unauthorized" }), { status: 401, headers: { "Content-Type": "application/json" } });
+      const db = env.DB;
+      const body = await request.json();
+      const { user_id, telegram_id, message } = body;
+
+      if (!message || !message.trim()) {
+        return new Response(JSON.stringify({ ok: false, error: "متن پیام الزامی است." }), { status: 400, headers: { "Content-Type": "application/json" } });
+      }
+
+      let tgId = telegram_id ? parseInt(telegram_id, 10) : null;
+      if (!tgId && user_id && db) {
+        const u = await db.prepare("SELECT telegram_id, full_name FROM users WHERE id = ?").bind(user_id).first();
+        tgId = u?.telegram_id;
+      }
+
+      if (!tgId || tgId <= 0) {
+        return new Response(JSON.stringify({ ok: false, error: "این مشتری شناسه تلگرام معتبر جهت دریافت پیام مستقیم ندارد." }), { status: 400, headers: { "Content-Type": "application/json" } });
+      }
+
+      if (db && user_id) {
+        // ایجاد یا دریافت تاپیک چت برای ثبت در تاریخچه مکالمات
+        let thread = await db.prepare("SELECT id FROM support_threads WHERE user_id = ? ORDER BY id DESC LIMIT 1").bind(user_id).first();
+        let threadId = thread?.id;
+        if (!threadId) {
+          const tIns = await db.prepare("INSERT INTO support_threads (user_id, status) VALUES (?, 'PENDING_CUSTOMER')").bind(user_id).run();
+          threadId = tIns?.meta?.last_row_id;
+        } else {
+          await db.prepare("UPDATE support_threads SET status = 'PENDING_CUSTOMER', updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(threadId).run();
+        }
+        if (threadId) {
+          await db.prepare("INSERT INTO support_messages (thread_id, sender_role, sender_id, message_text, is_read) VALUES (?, 'OPERATOR', ?, ?, 1)")
+            .bind(threadId, adminId, message).run();
+        }
+        await db.prepare("INSERT OR REPLACE INTO active_support_sessions (telegram_id, full_name, created_at) VALUES (?, 'کاربر', CURRENT_TIMESTAMP)")
+          .bind(tgId).run();
+      }
+
+      if (botToken) {
+        ctx.waitUntil(
+          fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              chat_id: tgId,
+              text: `📩 <b>پیام جدید از مدیریت کافی‌نت لیمو:</b>
+
+${message}
+
+<i>(در صورت نیاز می‌توانید مستقیماً در پاسخ به این پیام بنویسید)</i>`,
+              parse_mode: "HTML",
+              reply_markup: {
+                inline_keyboard: [
+                  [{ text: "❌ پایان گفت‌وگو", callback_data: "end_chat" }]
+                ]
+              }
+            })
+          }).catch(err => console.error("Error sending direct Telegram message:", err))
+        );
+      }
+
+      return new Response(JSON.stringify({ ok: true, message: "پیام مستقیم با موفقیت به تلگرام مشتری ارسال گردید." }), { headers: { "Content-Type": "application/json" } });
+    }
+
+    // ========================================================
+    // پایش پیشرفته سامانه‌ها (Advanced Website Monitors)
+    // ========================================================
+    if (reqUrl.pathname === "/api/admin/monitors/check-all" && request.method === "POST") {
+      if (!checkAdminAuth(request, env)) return new Response(JSON.stringify({ ok: false, error: "Unauthorized" }), { status: 401, headers: { "Content-Type": "application/json" } });
+      const db = env.DB;
+      let checkedCount = 0;
+      if (db) {
+        try {
+          const monRes = await db.prepare("SELECT * FROM website_monitors WHERE deleted_at IS NULL").all();
+          const list = monRes.results || [];
+          for (const m of list) {
+            let uptimeStatus = "UP";
+            let serviceStatus = "ACTIVE";
+            let statusCode = 200;
+            let latencyMs = 0;
+            const t0 = Date.now();
+            try {
+              const c = new AbortController();
+              const to = setTimeout(() => c.abort(), 6000);
+              const resp = await fetch(m.url, {
+                headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) LimoCafeMonitor/2.0" },
+                signal: c.signal
+              });
+              clearTimeout(to);
+              latencyMs = Date.now() - t0;
+              statusCode = resp.status;
+              uptimeStatus = (resp.ok || resp.status < 400) ? "UP" : "DOWN";
+
+              if (uptimeStatus === "UP") {
+                const text = await resp.text().catch(() => "");
+                // بررسی قاعده تشخیص باز بودن ثبت‌نام
+                let rule = {};
+                try { rule = JSON.parse(m.detection_rule || "{}"); } catch(e){}
+                if (rule.keyword && text) {
+                  if (text.includes(rule.keyword)) {
+                    serviceStatus = "OPEN";
+                  } else {
+                    serviceStatus = "CLOSED";
+                  }
+                }
+              } else {
+                serviceStatus = "DOWN";
+              }
+            } catch {
+              uptimeStatus = "DOWN";
+              serviceStatus = "DOWN";
+              statusCode = 0;
+              latencyMs = Date.now() - t0;
+            }
+
+            await db.prepare(`
+              UPDATE website_monitors
+              SET uptime_status = ?, service_status = ?, last_http_code = ?, last_response_time_ms = ?, last_checked_at = CURRENT_TIMESTAMP
+              WHERE id = ?
+            `).bind(uptimeStatus, serviceStatus, statusCode, latencyMs, m.id).run();
+
+            await db.prepare(`
+              INSERT INTO monitor_logs (monitor_id, uptime_status, service_status, http_code, response_time_ms, details)
+              VALUES (?, ?, ?, ?, ?, ?)
+            `).bind(m.id, uptimeStatus, serviceStatus, statusCode, latencyMs, `پایش بلادرنگ - تاخیر ${latencyMs}ms`).run().catch(() => {});
+            checkedCount++;
+          }
+        } catch (e) {
+          console.error("Error in check-all monitors:", e);
+        }
+      }
+      return new Response(JSON.stringify({ ok: true, count: checkedCount }), { headers: { "Content-Type": "application/json" } });
+    }
+
+    if (reqUrl.pathname === "/api/admin/monitors/save" && request.method === "POST") {
+      if (!checkAdminAuth(request, env)) return new Response(JSON.stringify({ ok: false, error: "Unauthorized" }), { status: 401, headers: { "Content-Type": "application/json" } });
+      const db = env.DB;
+      const body = await request.json();
+      const { id, code, title, url, check_interval_minutes, is_active } = body;
+      if (!code || !title || !url) {
+        return new Response(JSON.stringify({ ok: false, error: "کد، عنوان و نشانی اینترنتی الزامی هستند." }), { status: 400, headers: { "Content-Type": "application/json" } });
+      }
+      if (db) {
+        if (id) {
+          await db.prepare(`
+            UPDATE website_monitors
+            SET code = ?, title = ?, url = ?, check_interval_minutes = ?, is_active = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+          `).bind(code.trim(), title.trim(), url.trim(), parseInt(check_interval_minutes || 15, 10), is_active ? 1 : 0, id).run();
+        } else {
+          await db.prepare(`
+            INSERT INTO website_monitors (code, title, url, check_interval_minutes, is_active)
+            VALUES (?, ?, ?, ?, ?)
+          `).bind(code.trim(), title.trim(), url.trim(), parseInt(check_interval_minutes || 15, 10), is_active ? 1 : 0).run();
+        }
+      }
+      return new Response(JSON.stringify({ ok: true }), { headers: { "Content-Type": "application/json" } });
+    }
+
+    if (reqUrl.pathname === "/api/admin/monitors/logs") {
+      if (!checkAdminAuth(request, env)) return new Response(JSON.stringify({ ok: false, error: "Unauthorized" }), { status: 401, headers: { "Content-Type": "application/json" } });
+      const db = env.DB;
+      const monId = reqUrl.searchParams.get("monitor_id");
+      let logs = [];
+      if (db) {
+        let q = "SELECT l.*, m.title as monitor_title FROM monitor_logs l JOIN website_monitors m ON l.monitor_id = m.id";
+        if (monId) q += ` WHERE l.monitor_id = ${parseInt(monId, 10)}`;
+        q += " ORDER BY l.id DESC LIMIT 50";
+        const r = await db.prepare(q).all();
+        logs = r.results || [];
+      }
+      return new Response(JSON.stringify({ ok: true, logs }), { headers: { "Content-Type": "application/json" } });
+    }
+
+    // فعال / غیرفعال‌سازی وضعیت کانال ارتباطی
+    if (reqUrl.pathname === "/api/admin/channel/toggle" && request.method === "POST") {
+      if (!checkAdminAuth(request, env)) return new Response(JSON.stringify({ ok: false, error: "Unauthorized" }), { status: 401, headers: { "Content-Type": "application/json" } });
+      const { id, is_active } = await request.json();
+      if (env.DB && id !== undefined) {
+        await env.DB.prepare("UPDATE communication_channels SET is_active = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+          .bind(is_active ? 1 : 0, id).run();
+      }
+      return new Response(JSON.stringify({ ok: true }), { headers: { "Content-Type": "application/json" } });
+    }
+
+    // ========================================================
+    // نسخه پشتیبان کامل از دیتابیس D1 (Full Database Backup JSON)
+    // ========================================================
+    if (reqUrl.pathname === "/api/admin/backup/export") {
+      if (!checkAdminAuth(request, env)) return new Response(JSON.stringify({ ok: false, error: "Unauthorized" }), { status: 401, headers: { "Content-Type": "application/json" } });
+      const db = env.DB;
+      const tables = [
+        'users', 'orders', 'service_categories', 'service_items',
+        'seasonal_campaigns', 'communication_channels', 'website_monitors',
+        'wallets', 'wallet_transactions', 'support_threads', 'support_messages',
+        'system_settings', 'order_audit_logs'
+      ];
+      const backup = {
+        software: 'کافی نت لیمو',
+        version: '2.0.0',
+        exported_at: new Date().toISOString(),
+        tables: {}
+      };
+      if (db) {
+        for (const tbl of tables) {
+          try {
+            const res = await db.prepare(`SELECT * FROM ${tbl}`).all();
+            backup.tables[tbl] = res.results || [];
+          } catch(err) {
+            backup.tables[tbl] = [];
+          }
+        }
+      }
+      const jsonStr = JSON.stringify(backup, null, 2);
+      const filename = `limo_backup_${new Date().toISOString().slice(0, 10)}.json`;
+      return new Response(jsonStr, {
+        headers: {
+          "Content-Type": "application/json; charset=utf-8",
+          "Content-Disposition": `attachment; filename="${filename}"`
+        }
+      });
+    }
+
     if (reqUrl.pathname === "/api/admin/audit-logs") {
       if (!checkAdminAuth(request, env)) {
         return new Response(JSON.stringify({ ok: false, error: "Unauthorized" }), {
@@ -4116,7 +4632,7 @@ export default {
         let buttons = [];
         if (db) {
           try {
-            const catRes = await db.prepare("SELECT * FROM service_categories WHERE is_active = 1 ORDER BY order_priority ASC").all();
+            const catRes = await db.prepare("SELECT * FROM service_categories WHERE is_active = 1 AND deleted_at IS NULL ORDER BY order_priority ASC").all();
             const cats = catRes.results || [];
             for (const c of cats) {
               buttons.push([{ text: c.title, callback_data: `cat_${c.code || c.id}` }]);
@@ -4557,7 +5073,7 @@ ${escapeHtml(desc)}
       // ۱۳. ثبت‌نام‌های مقطعی و دوره‌ای
       if (data === "seasonal_list") {
         if (db) {
-          const res = await db.prepare("SELECT * FROM seasonal_campaigns WHERE is_active = 1 ORDER BY start_at ASC").all();
+          const res = await db.prepare("SELECT * FROM seasonal_campaigns WHERE is_active = 1 AND deleted_at IS NULL ORDER BY start_at ASC").all();
           const camps = res.results || [];
           if (camps.length === 0) {
             return callbackReply("⏰ <b>ثبت‌نام‌های مقطعی و زمان‌دار</b>\n\nدر حال حاضر هیچ ثبت‌نام دوره‌ای یا مهلت‌داری فعال نیست.", {

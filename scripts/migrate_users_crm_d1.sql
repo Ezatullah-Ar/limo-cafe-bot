@@ -1,0 +1,3 @@
+ALTER TABLE users ADD COLUMN national_code TEXT;
+ALTER TABLE users ADD COLUMN alien_code TEXT;
+ALTER TABLE users ADD COLUMN notes TEXT;
