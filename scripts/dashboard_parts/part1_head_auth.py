@@ -8,14 +8,22 @@ HEAD_AND_AUTH = r'''<!DOCTYPE html>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>پیشخوان مدیریت کافی‌نت لیمو | Limo Portal</title>
     <link rel="icon" type="image/png" href="/logo.png">
+    
+    <!-- فونت فارسی با پشتیبانی از سیستم‌های داخلی بدون نیاز به فیلترشکن -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+    
     <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
     <script>
         tailwind.config = {
             theme: {
                 extend: {
-                    fontFamily: { sans: ['Vazirmatn', 'sans-serif'] },
+                    fontFamily: { 
+                        sans: ['Vazirmatn', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'IranSans', 'Tahoma', 'sans-serif'],
+                        persian: ['Vazirmatn', 'IranSans', 'Tahoma', 'sans-serif']
+                    },
                     colors: {
                         limo: { 50: '#f7fee7', 100: '#ecfccb', 200: '#d9f99d', 300: '#bef264', 400: '#a3e635', 500: '#84cc16', 600: '#65a30d', 700: '#4d7c0f', 800: '#3f6212', 900: '#365314', 950: '#1a2e05' },
                         obsidian: { 800: '#0f1f18', 850: '#0a1712', 900: '#07120e', 950: '#040b08' }
@@ -32,13 +40,17 @@ HEAD_AND_AUTH = r'''<!DOCTYPE html>
     </script>
     <style>
         [v-cloak] { display: none !important; }
-        body { font-family: 'Vazirmatn', sans-serif; background-color: #f8fafc; color: #0f172a; }
+        body { 
+            font-family: 'Vazirmatn', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'IranSans', Tahoma, sans-serif; 
+            background-color: #f8fafc; 
+            color: #0f172a; 
+        }
         ::-webkit-scrollbar { width: 5px; height: 5px; }
         ::-webkit-scrollbar-track { background: #07120e; }
         ::-webkit-scrollbar-thumb { background: #1b382c; border-radius: 4px; }
         .main-scroll::-webkit-scrollbar-track { background: #f1f5f9; }
         .main-scroll::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
-        .glass-panel { background: rgba(255, 255, 255, 0.85); backdrop-filter: blur(12px); }
+        .glass-panel { background: rgba(255, 255, 255, 0.85); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); }
         .sidebar-gradient { background: linear-gradient(180deg, #07140f 0%, #0d221a 45%, #06110d 100%); }
     </style>
 </head>

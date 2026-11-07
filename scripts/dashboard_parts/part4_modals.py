@@ -540,6 +540,12 @@ MODALS_HTML = r'''
                         <label class="block font-bold text-slate-700 mb-1">توضیحات</label>
                         <textarea v-model="categoryForm.description" rows="2" class="w-full px-3 py-2 border border-slate-200 rounded-xl"></textarea>
                     </div>
+                    <div class="pt-1">
+                        <label class="flex items-center gap-2 cursor-pointer font-bold text-slate-700">
+                            <input type="checkbox" v-model="categoryForm.is_active" class="rounded text-limo-600 focus:ring-limo-500 w-4 h-4">
+                            <span>فعال و قابل نمایش در بات تلگرام و مینی‌اپ</span>
+                        </label>
+                    </div>
                     <div class="pt-2 flex justify-end gap-2">
                         <button type="button" @click="categoryModal = false" class="px-4 py-2 bg-slate-100 rounded-xl font-bold text-slate-600">انصراف</button>
                         <button type="submit" class="px-5 py-2 bg-gradient-to-r from-limo-500 to-lime-600 hover:from-limo-400 hover:to-lime-500 text-slate-950 font-black rounded-xl">ذخیره دسته‌بندی</button>
@@ -631,6 +637,16 @@ MODALS_HTML = r'''
                             <label class="block font-bold text-slate-700 mb-1">اولویت نمایش (ترتیب)</label>
                             <input v-model.number="campaignForm.order_priority" type="number" placeholder="10" class="w-full px-3 py-2 border border-slate-200 rounded-xl font-mono">
                         </div>
+                    </div>
+                    <div class="p-3 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between">
+                        <div>
+                            <span class="font-bold text-slate-800 block text-xs">نمایش و فعال بودن در مینی‌اپ و ربات:</span>
+                            <span class="text-[10px] text-slate-400">در صورت غیرفعال بودن، رویداد در کاتالوگ عمومی نشان داده نمی‌شود.</span>
+                        </div>
+                        <label class="relative inline-flex items-center cursor-pointer">
+                            <input type="checkbox" v-model="campaignForm.is_active" :true-value="1" :false-value="0" class="sr-only peer">
+                            <div class="w-9 h-5 bg-slate-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:right-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-600"></div>
+                        </label>
                     </div>
                     <div>
                         <label class="block font-bold text-slate-700 mb-1">توضیحات و مدارک مورد نیاز</label>
@@ -763,6 +779,31 @@ MODALS_HTML = r'''
                         <button type="submit" class="px-5 py-2 bg-slate-900 text-white font-bold rounded-xl">ثبت دسترسی اپراتور</button>
                     </div>
                 </form>
+            </div>
+        </div>
+
+        <!-- ======================================================== -->
+        <!-- مودال ۱۲: هشدار عدم فعالیت و خروج خودکار امنیتی -->
+        <!-- ======================================================== -->
+        <div v-if="showInactivityWarning" class="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md">
+            <div class="bg-white rounded-3xl max-w-sm w-full p-6 shadow-2xl border border-amber-200 text-center space-y-4">
+                <div class="w-14 h-14 mx-auto rounded-2xl bg-amber-100 text-amber-800 text-2xl flex items-center justify-center animate-bounce">
+                    ⏳
+                </div>
+                <div>
+                    <h3 class="font-black text-sm text-slate-900">هشدار عدم فعالیت در پنل مدیریت</h3>
+                    <p class="text-xs text-slate-500 mt-1.5 leading-relaxed">
+                        نشست شما به دلیل عدم فعالیت تا <span class="font-black text-rose-600 font-mono text-sm">{{ remainingSeconds }}</span> ثانیه دیگر به دلایل امنیتی بسته خواهد شد.
+                    </p>
+                </div>
+                <div class="flex gap-2 pt-2">
+                    <button type="button" @click="logoutDueToInactivity" class="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs transition">
+                        خروج امن
+                    </button>
+                    <button type="button" @click="extendSession" class="flex-1 py-2.5 bg-gradient-to-r from-limo-500 to-lime-600 hover:from-limo-400 hover:to-lime-500 text-slate-950 font-black rounded-xl text-xs transition shadow-sm">
+                        تمدید نشست
+                    </button>
+                </div>
             </div>
         </div>
 '''

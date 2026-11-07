@@ -200,10 +200,48 @@ VUE_APP_SCRIPT = r'''
                     min_wallet_topup: 10000,
                     max_upload_size_mb: 15,
                     admin_tg_id: '',
-                    allowed_file_types: 'jpg, jpeg, png, pdf, zip'
+                    allowed_file_types: 'jpg, jpeg, png, pdf, zip',
+                    about_us_content: '',
+                    motion_graphics_enabled: '1'
                 });
                 const isSavingSettings = ref(false);
                 const isExportingBackup = ref(false);
+
+                // مدیریت نشست و خروج خودکار امنیتی در صورت عدم فعالیت (Inactivity Timeout)
+                const INACTIVITY_TIMEOUT_MS = 20 * 60 * 1000; // ۲۰ دقیقه
+                let inactivityTimer = null;
+                let warningTimer = null;
+                const showInactivityWarning = ref(false);
+                const remainingSeconds = ref(60);
+
+                function resetInactivityTimer() {
+                    if (!isAuthenticated.value) return;
+                    if (inactivityTimer) clearTimeout(inactivityTimer);
+                    if (warningTimer) clearInterval(warningTimer);
+                    showInactivityWarning.value = false;
+
+                    inactivityTimer = setTimeout(() => {
+                        showInactivityWarning.value = true;
+                        remainingSeconds.value = 60;
+                        warningTimer = setInterval(() => {
+                            remainingSeconds.value--;
+                            if (remainingSeconds.value <= 0) {
+                                clearInterval(warningTimer);
+                                logoutDueToInactivity();
+                            }
+                        }, 1000);
+                    }, INACTIVITY_TIMEOUT_MS - 60000);
+                }
+
+                function logoutDueToInactivity() {
+                    showInactivityWarning.value = false;
+                    logout();
+                    alert('⚠️ نشست شما به دلیل عدم فعالیت به مدت ۲۰ دقیقه به‌صورت خودکار و امن بسته شد. لطفاً دوباره وارد شوید.');
+                }
+
+                function extendSession() {
+                    resetInactivityTimer();
+                }
 
                 // محاسبات وضعیت‌ها
                 const pendingCount = computed(() => orders.value.filter(o => o.status === 'PENDING').length);
@@ -258,6 +296,7 @@ VUE_APP_SCRIPT = r'''
                             adminUser.value.username = loginUsername.value.trim();
                             isAuthenticated.value = true;
                             refreshData();
+                            resetInactivityTimer();
                         } else {
                             loginError.value = 'نام کاربری یا کلمه عبور نادرست است.';
                         }
@@ -269,6 +308,9 @@ VUE_APP_SCRIPT = r'''
                 }
 
                 function logout() {
+                    if (inactivityTimer) clearTimeout(inactivityTimer);
+                    if (warningTimer) clearInterval(warningTimer);
+                    showInactivityWarning.value = false;
                     localStorage.removeItem('limo_admin_token');
                     localStorage.removeItem('limo_admin_username');
                     isAuthenticated.value = false;
@@ -640,22 +682,48 @@ VUE_APP_SCRIPT = r'''
 
                 // دسته‌بندی‌ها CRUD
                 function openCategoriesModal() {
-                    categoryForm.value = { id: null, code: '', title: '', description: '', order_priority: 0 };
+                    categoryForm.value = { id: null, code: '', title: '', description: '', order_priority: 0, is_active: true };
                     categoryModal.value = true;
                 }
 
                 function editCategory(cat) {
-                    categoryForm.value = { ...cat };
+                    categoryForm.value = { ...cat, is_active: cat.is_active !== undefined ? Boolean(cat.is_active) : true };
                     categoryModal.value = true;
+                }
+
+                async function toggleCategoryStatus(cat) {
+                    try {
+                        const nextStatus = cat.is_active ? 0 : 1;
+                        cat.is_active = nextStatus;
+                        const res = await fetchWithAuth('/api/admin/category/toggle', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ id: cat.id, is_active: nextStatus })
+                        });
+                        const data = await res.json();
+                        if (!data.ok) {
+                            cat.is_active = nextStatus ? 0 : 1;
+                            alert(data.error || "خطا در تغییر وضعیت دسته‌بندی");
+                        } else {
+                            fetchServices();
+                        }
+                    } catch(e) {
+                        cat.is_active = cat.is_active ? 0 : 1;
+                        alert("خطا در ارتباط با سرور");
+                    }
                 }
 
                 async function saveCategoryForm() {
                     if (!categoryForm.value.title || !categoryForm.value.code) return;
                     try {
+                        const payload = {
+                            ...categoryForm.value,
+                            is_active: categoryForm.value.is_active ? 1 : 0
+                        };
                         const res = await fetchWithAuth('/api/admin/category/save', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify(categoryForm.value)
+                            body: JSON.stringify(payload)
                         });
                         const data = await res.json();
                         if (data.ok) {
@@ -797,7 +865,7 @@ VUE_APP_SCRIPT = r'''
                     await fetchWithAuth('/api/admin/seasonal/status', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ campaign_id: c.id, is_active: c.is_active, status: c.status })
+                        body: JSON.stringify({ id: c.id, campaign_id: c.id, is_active: c.is_active, status: c.status })
                     });
                 }
 
@@ -1104,16 +1172,20 @@ VUE_APP_SCRIPT = r'''
                 async function saveShopSettings() {
                     isSavingSettings.value = true;
                     try {
-                        for (const [key, val] of Object.entries(settingsForm.value)) {
-                            await fetchWithAuth('/api/admin/setting/update', {
-                                method: 'POST',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({ key, value: String(val) })
-                            });
+                        const res = await fetchWithAuth('/api/admin/settings/batch', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ settings: settingsForm.value })
+                        });
+                        const data = await res.json();
+                        if (data.ok) {
+                            alert("✅ تنظیمات کاربردی کافی‌نت با موفقیت و به‌صورت اتمیک ذخیره شد.");
+                            await fetchSettings();
+                        } else {
+                            alert(data.error || "خطا در ذخیره تنظیمات.");
                         }
-                        alert("✅ تنظیمات کاربردی کافی‌نت با موفقیت ذخیره شد.");
                     } catch(e) {
-                        alert("خطا در ذخیره تنظیمات.");
+                        alert("خطا در برقراری ارتباط جهت ذخیره تنظیمات.");
                     } finally {
                         isSavingSettings.value = false;
                     }
@@ -1244,6 +1316,28 @@ VUE_APP_SCRIPT = r'''
 
                 
                 // تغییر ترتیب و اولویت نمایش آیتم‌ها
+                                // تنظیم مستقیم و سریع اولویت ترتیب نمایش
+                async function updateItemPriority(table, id, priority) {
+                    try {
+                        const prioNum = parseInt(priority, 10) || 0;
+                        const res = await fetchWithAuth('/api/admin/priority/update', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ table, id, priority: prioNum })
+                        });
+                        const data = await res.json();
+                        if (data.ok) {
+                            if (table === 'services' || table === 'categories') await fetchServices();
+                            else if (table === 'campaigns') await fetchCampaigns();
+                            else if (table === 'channels') await fetchChannels();
+                        } else {
+                            alert(data.error || 'خطا در ثبت اولویت');
+                        }
+                    } catch(e) {
+                        alert('خطا در ارتباط با سرور هنگام ثبت اولویت');
+                    }
+                }
+
                 async function moveItem(table, id, direction) {
                     try {
                         const res = await fetchWithAuth('/api/admin/reorder', {
@@ -1389,7 +1483,11 @@ VUE_APP_SCRIPT = r'''
                         isAuthenticated.value = true;
                         adminUser.value.username = localStorage.getItem('limo_admin_username') || 'admin';
                         refreshData();
+                        resetInactivityTimer();
                     }
+                    ['mousemove', 'mousedown', 'keydown', 'touchstart', 'scroll'].forEach(evt => {
+                        window.addEventListener(evt, resetInactivityTimer, { passive: true });
+                    });
                 });
 
                 return {
@@ -1408,6 +1506,11 @@ VUE_APP_SCRIPT = r'''
                     operatorRoleLabel,
                     syncOrderToShop,
                     moveItem,
+                    updateItemPriority,
+                    showInactivityWarning,
+                    remainingSeconds,
+                    logoutDueToInactivity,
+                    extendSession,
                     testShopSyncConnection,
                     isAuthenticated,
                     adminUser,
@@ -1485,6 +1588,8 @@ VUE_APP_SCRIPT = r'''
                     categoryModal,
                     categoryForm,
                     saveCategoryForm,
+                    toggleCategoryStatus,
+                    openCategoriesModal,
                     openAdjustModal,
                     walletModal,
                     walletForm,

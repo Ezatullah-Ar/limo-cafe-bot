@@ -361,9 +361,10 @@ VIEWS_HTML = r'''
                                     <h4 class="font-black text-sm text-slate-900">{{ s.title }}</h4>
                                     <span class="font-mono text-[10px] text-slate-400">{{ s.code }}</span>
                                 </div>
-                                <div class="flex items-center gap-1">
-                                    <button @click="moveItem('services', s.id, 'up')" class="p-1 hover:bg-slate-100 rounded text-slate-500 hover:text-slate-800 text-xs" title="انتقال به بالا">⬆️</button>
-                                    <button @click="moveItem('services', s.id, 'down')" class="p-1 hover:bg-slate-100 rounded text-slate-500 hover:text-slate-800 text-xs" title="انتقال به پایین">⬇️</button>
+                                <div class="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-xl px-2 py-1" title="تغییر اولویت و ترتیب نمایش">
+                                    <span class="text-[10px] text-slate-400 font-bold">ترتیب:</span>
+                                    <input type="number" v-model.number="s.order_priority" @change="updateItemPriority('services', s.id, s.order_priority)"
+                                        class="w-12 text-center text-xs font-black bg-white border border-slate-200 rounded-lg py-0.5 focus:border-limo-500 focus:outline-none font-mono">
                                 </div>
                                 <button @click="toggleServiceActive(s)"
                                     :class="s.is_active ? 'bg-emerald-500' : 'bg-slate-300'"
@@ -416,6 +417,7 @@ VIEWS_HTML = r'''
                                     <th class="py-3.5 px-4 font-bold">عنوان دسته‌بندی</th>
                                     <th class="py-3.5 px-4 font-bold">توضیحات</th>
                                     <th class="py-3.5 px-4 font-bold">اولویت نمایش</th>
+                                    <th class="py-3.5 px-4 font-bold text-center">وضعیت</th>
                                     <th class="py-3.5 px-4 font-bold text-center">عملیات</th>
                                 </tr>
                             </thead>
@@ -426,9 +428,16 @@ VIEWS_HTML = r'''
                                     <td class="py-3 px-4 text-slate-500">{{ cat.description || '---' }}</td>
                                     <td class="py-3 px-4 font-mono">{{ cat.order_priority || 0 }}</td>
                                     <td class="py-3 px-4 text-center">
+                                        <button @click="toggleCategoryStatus(cat)" :class="cat.is_active ? 'bg-emerald-500' : 'bg-slate-300'" class="relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full transition-colors duration-200 ease-in-out focus:outline-none" title="تغییر وضعیت فعال/غیرفعال">
+                                            <span :class="cat.is_active ? '-translate-x-4' : 'translate-x-0'" class="pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-lg ring-0 transition duration-200 ease-in-out"></span>
+                                        </button>
+                                    </td>
+                                    <td class="py-3 px-4 text-center">
                                         <div class="flex items-center justify-center gap-2">
-                                            <button @click="moveItem('categories', cat.id, 'up')" class="p-1 hover:bg-slate-200 rounded text-xs" title="انتقال به بالا">⬆️</button>
-                                            <button @click="moveItem('categories', cat.id, 'down')" class="p-1 hover:bg-slate-200 rounded text-xs" title="انتقال به پایین">⬇️</button>
+                                            <div class="flex items-center justify-center gap-1 bg-slate-50 border border-slate-200 rounded-lg px-1.5 py-0.5" title="تغییر مستقیم اولویت">
+                                                <input type="number" v-model.number="cat.order_priority" @change="updateItemPriority('categories', cat.id, cat.order_priority)"
+                                                    class="w-11 text-center text-xs font-black bg-white border border-slate-200 rounded py-0.5 focus:border-limo-500 focus:outline-none font-mono">
+                                            </div>
                                             <button @click="editCategory(cat)" class="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-bold transition">
                                                 ویرایش ✏️
                                             </button>
@@ -526,9 +535,10 @@ VIEWS_HTML = r'''
                                     <h4 class="font-black text-sm text-slate-900">{{ c.title }}</h4>
                                     <span class="font-mono text-[10px] text-slate-400">{{ c.code }}</span>
                                 </div>
-                                <div class="flex items-center gap-1">
-                                    <button @click="moveItem('campaigns', c.id, 'up')" class="p-1 hover:bg-slate-100 rounded text-slate-500 hover:text-slate-800 text-xs" title="انتقال به بالا">⬆️</button>
-                                    <button @click="moveItem('campaigns', c.id, 'down')" class="p-1 hover:bg-slate-100 rounded text-slate-500 hover:text-slate-800 text-xs" title="انتقال به پایین">⬇️</button>
+                                <div class="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-xl px-2 py-1" title="تغییر اولویت و ترتیب نمایش">
+                                    <span class="text-[10px] text-slate-400 font-bold">ترتیب:</span>
+                                    <input type="number" v-model.number="c.order_priority" @change="updateItemPriority('campaigns', c.id, c.order_priority)"
+                                        class="w-12 text-center text-xs font-black bg-white border border-slate-200 rounded-lg py-0.5 focus:border-limo-500 focus:outline-none font-mono">
                                 </div>
                                 <button @click="toggleSeasonalActive(c)"
                                     :class="c.is_active ? 'bg-emerald-500' : 'bg-slate-300'"
@@ -764,10 +774,11 @@ VIEWS_HTML = r'''
                                     <td class="py-3 px-4 font-mono text-slate-400">{{ ch.key }}</td>
                                     <td class="py-3 px-4 font-mono text-slate-700">{{ ch.value || '---' }}</td>
                                     <td class="py-3 px-4">
-                                        <div class="flex items-center gap-1">
-                                    <button @click="moveItem('channels', ch.id, 'up')" class="p-1 hover:bg-slate-100 rounded text-slate-500 hover:text-slate-800 text-xs" title="انتقال به بالا">⬆️</button>
-                                    <button @click="moveItem('channels', ch.id, 'down')" class="p-1 hover:bg-slate-100 rounded text-slate-500 hover:text-slate-800 text-xs" title="انتقال به پایین">⬇️</button>
-                                </div>
+                                        <div class="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-xl px-2 py-1" title="تغییر اولویت و ترتیب نمایش">
+                                            <span class="text-[10px] text-slate-400 font-bold">ترتیب:</span>
+                                            <input type="number" v-model.number="ch.order_priority" @change="updateItemPriority('channels', ch.id, ch.order_priority)"
+                                                class="w-12 text-center text-xs font-black bg-white border border-slate-200 rounded-lg py-0.5 focus:border-limo-500 focus:outline-none font-mono">
+                                        </div>
                                 <button @click="toggleChannelActive(ch)"
                                             :class="ch.is_active ? 'bg-emerald-500' : 'bg-slate-300'"
                                             class="relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none">
@@ -979,6 +990,27 @@ VIEWS_HTML = r'''
                                 <label class="block font-bold text-slate-700">نشانی فیزیکی دفتر کافی‌نت</label>
                                 <input v-model="settingsForm.shop_address" type="text" placeholder="تهران، خیابان آزادی، پلاک ..."
                                     class="w-full px-4 py-2.5 border border-slate-200 rounded-xl">
+                            </div>
+                            <!-- ویرایشگر محتوای صفحه درباره ما در مینی‌اپلیکیشن -->
+                            <div class="space-y-1.5 md:col-span-2 p-4 bg-slate-50 rounded-2xl border border-slate-200">
+                                <div class="flex justify-between items-center mb-1">
+                                    <label class="block font-bold text-slate-800 text-xs">📖 محتوای صفحه «درباره ما» در مینی‌اپلیکیشن</label>
+                                    <span class="text-[10px] text-slate-400 font-medium">قابل ویرایش مستقیم و نمایش لحظه‌ای به مشتریان</span>
+                                </div>
+                                <textarea v-model="settingsForm.about_us_content" rows="4" placeholder="معرفی کافی‌نت لیمو، تعهدات، سوابق و استانداردهای خدمات..."
+                                    class="w-full px-4 py-3 border border-slate-200 rounded-xl bg-white text-xs leading-relaxed"></textarea>
+                            </div>
+
+                            <!-- تنظیم موشن‌گرافیک مینی‌اپلیکیشن -->
+                            <div class="space-y-1.5 md:col-span-2 p-4 bg-slate-50 rounded-2xl border border-slate-200 flex items-center justify-between">
+                                <div>
+                                    <span class="font-bold text-slate-800 text-xs block">✨ انیمیشن‌ها و موشن‌گرافیک مینی‌اپلیکیشن</span>
+                                    <span class="text-[10px] text-slate-400 block mt-0.5">افکت‌های بصری شناور و پالس آنلاین برای جذابیت بیشتر</span>
+                                </div>
+                                <label class="relative inline-flex items-center cursor-pointer">
+                                    <input type="checkbox" v-model="settingsForm.motion_graphics_enabled" true-value="1" false-value="0" class="sr-only peer">
+                                    <div class="w-11 h-6 bg-slate-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:right-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-600"></div>
+                                </label>
                             </div>
                         </div>
 

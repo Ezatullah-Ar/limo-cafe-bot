@@ -1217,6 +1217,171 @@ export default {
       });
     }
 
+    // دریافت یکپارچه و بهینه‌سازی‌شده اطلاعات بوت‌استرپ مینی‌اپلیکیشن در ۱ ریکوئست (GET /api/client/bootstrap)
+    if (reqUrl.pathname === "/api/client/bootstrap") {
+      const db = env.DB;
+      const tgId = parseInt(reqUrl.searchParams.get("telegram_id") || "0", 10);
+      const fullName = reqUrl.searchParams.get("full_name") || "کاربر گرامی";
+
+      let categories = [];
+      let services = [];
+      let campaigns = [];
+      let channels = [];
+      let settings = {
+        is_open: "1",
+        card_number: "6037991812345678",
+        card_owner: "مدیریت کافی نت لیمو",
+        support_phone: "09364519860",
+        witness_provision_fee: 3500000,
+        motion_graphics_enabled: "1",
+        about_us_content: ""
+      };
+      let userData = {
+        user: null,
+        wallet: { balance: 0 },
+        orders: [],
+        unread_messages: 0
+      };
+
+      if (db) {
+        try {
+          // ۱. دسته‌بندی‌ها
+          const catRes = await db.prepare("SELECT id, code, title, description, order_priority FROM service_categories WHERE is_active = 1 AND deleted_at IS NULL ORDER BY order_priority ASC, id ASC").all();
+          categories = catRes.results || [];
+
+          // ۲. کاتالوگ خدمات
+          const svcRes = await db.prepare(`
+            SELECT s.*, c.title as category_title
+            FROM service_items s
+            LEFT JOIN service_categories c ON s.category_id = c.id
+            WHERE s.is_active = 1 AND s.deleted_at IS NULL
+            ORDER BY c.order_priority ASC, s.order_priority ASC, s.id ASC
+          `).all();
+          services = (svcRes.results || []).map(s => {
+            let fields = [];
+            let docs = [];
+            try {
+              const parsedF = JSON.parse(s.required_fields || "[]");
+              fields = Array.isArray(parsedF) ? parsedF : [];
+            } catch(e){}
+            try {
+              const parsedD = JSON.parse(s.required_docs || "[]");
+              docs = Array.isArray(parsedD) ? parsedD : [];
+            } catch(e){}
+            return {
+              id: s.id,
+              code: s.code,
+              category_id: s.category_id,
+              title: s.title,
+              desc: s.description || "",
+              category: s.category_title || "عمومی",
+              base_fee: s.base_fee || 0,
+              order_priority: s.order_priority || 0,
+              required_fields: fields,
+              required_docs: docs
+            };
+          });
+
+          // ۳. رویدادهای مقطعی با وضعیت پویا
+          const campRes = await db.prepare("SELECT * FROM seasonal_campaigns WHERE is_active = 1 AND deleted_at IS NULL ORDER BY order_priority ASC, start_at ASC").all();
+          const now = new Date();
+          campaigns = (campRes.results || []).map(c => {
+            let dynamicStatus = c.status;
+            if (c.is_active && c.status !== 'SUSPENDED' && c.status !== 'DRAFT') {
+              const start = new Date(c.start_at);
+              const end = new Date(c.end_at);
+              if (now < start) {
+                dynamicStatus = 'COMING_SOON';
+              } else if (now >= start && now <= end) {
+                dynamicStatus = 'OPEN';
+              } else {
+                dynamicStatus = 'CLOSED';
+              }
+            }
+            return {
+              id: c.id,
+              code: c.code,
+              title: c.title,
+              description: c.description,
+              start_at: c.start_at,
+              end_at: c.end_at,
+              base_fee: c.base_fee,
+              status: dynamicStatus,
+              order_priority: c.order_priority
+            };
+          });
+
+          // ۴. راه‌های ارتباطی
+          const chRes = await db.prepare("SELECT * FROM communication_channels WHERE is_active = 1 AND deleted_at IS NULL ORDER BY order_priority ASC, id ASC").all();
+          channels = chRes.results || [];
+
+          // ۵. تنظیمات سیستم
+          const setRes = await db.prepare("SELECT key, value FROM system_settings").all();
+          (setRes.results || []).forEach(row => {
+            settings[row.key] = row.value;
+          });
+
+          // ۶. داده‌های کاربری (در صورت ارسال شناسه تلگرام)
+          if (tgId) {
+            let u = await db.prepare("SELECT * FROM users WHERE telegram_id = ?").bind(tgId).first();
+            if (!u) {
+              await db.prepare("INSERT INTO users (telegram_id, full_name, created_at) VALUES (?, ?, CURRENT_TIMESTAMP)").bind(tgId, fullName).run();
+              u = await db.prepare("SELECT * FROM users WHERE telegram_id = ?").bind(tgId).first();
+            }
+
+            if (u) {
+              let w = await db.prepare("SELECT * FROM wallets WHERE user_id = ?").bind(u.id).first();
+            if (!w) {
+              await db.prepare("INSERT INTO wallets (user_id, balance, is_frozen) VALUES (?, 0, 0)").bind(u.id).run();
+              w = { balance: 0, is_frozen: 0 };
+            }
+
+            const ordersRes = await db.prepare(`
+              SELECT o.*, s.title as service_title, s.code as service_code
+              FROM orders o
+              LEFT JOIN service_items s ON o.service_id = s.id
+              WHERE o.user_id = ? AND o.deleted_at IS NULL
+              ORDER BY o.id DESC LIMIT 50
+            `).bind(u.id).all();
+
+            const th = await db.prepare("SELECT id, status FROM support_threads WHERE user_id = ? AND status != 'CLOSED' ORDER BY id DESC LIMIT 1").bind(u.id).first();
+            let unreadCount = 0;
+            if (th) {
+              const unreadRes = await db.prepare("SELECT COUNT(*) as c FROM support_messages WHERE thread_id = ? AND sender_role = 'OPERATOR' AND is_read = 0").bind(th.id).first();
+              unreadCount = unreadRes?.c || 0;
+            }
+
+            userData = {
+              user: u,
+              wallet: w,
+              orders: ordersRes.results || [],
+              thread_id: th ? th.id : null,
+              unread_messages: unreadCount
+            };
+            }
+          }
+        } catch (e) {
+          console.error("Error in /api/client/bootstrap:", e);
+        }
+      }
+
+      return new Response(JSON.stringify({
+        ok: true,
+        categories,
+        services,
+        campaigns,
+        channels,
+        settings,
+        user_data: userData
+      }), {
+        headers: {
+          "Content-Type": "application/json",
+          "Access-Control-Allow-Origin": "*",
+          "Cache-Control": "no-cache"
+        }
+      });
+    }
+
     // داشبورد و پروفایل مشتری در مینی‌اپ
     if (reqUrl.pathname === "/api/client/user/dashboard") {
       const db = env.DB;
@@ -1348,7 +1513,7 @@ export default {
       }
     }
 
-    if (reqUrl.pathname === "/api/admin/seasonal/status" && request.method === "POST") {
+    if ((reqUrl.pathname === "/api/admin/seasonal/status" || reqUrl.pathname === "/api/admin/campaign/toggle" || reqUrl.pathname === "/api/admin/campaign/status") && request.method === "POST") {
       if (!checkAdminAuth(request, env)) {
         return new Response(JSON.stringify({ ok: false, error: "Unauthorized" }), {
           status: 401, headers: { "Content-Type": "application/json" }
@@ -1356,7 +1521,8 @@ export default {
       }
       const db = env.DB;
       const body = await request.json();
-      const { id, status, is_active } = body;
+      const id = body.id || body.campaign_id;
+      const { status, is_active } = body;
       if (db && id) {
         try {
           let sql = "UPDATE seasonal_campaigns SET updated_at = CURRENT_TIMESTAMP";
@@ -1857,7 +2023,7 @@ export default {
     }
 
     // ۲۰. فعال/غیرفعال‌سازی یک خدمت در پنل مدیریت
-    if (reqUrl.pathname === "/api/admin/service/toggle" && request.method === "POST") {
+    if ((reqUrl.pathname === "/api/admin/service/toggle" || reqUrl.pathname === "/api/admin/service/status") && request.method === "POST") {
       if (!checkAdminAuth(request, env)) {
         return new Response(JSON.stringify({ ok: false, error: "Unauthorized" }), {
           status: 401, headers: { "Content-Type": "application/json" }
@@ -1934,6 +2100,17 @@ export default {
     }
 
     // ۲۲. افزودن یا ویرایش دسته‌بندی در پنل مدیریت (POST /api/admin/category/save)
+    // فعال / غیرفعال‌سازی وضعیت دسته‌بندی
+    if ((reqUrl.pathname === "/api/admin/category/toggle" || reqUrl.pathname === "/api/admin/category/status") && request.method === "POST") {
+      if (!checkAdminAuth(request, env)) return new Response(JSON.stringify({ ok: false, error: "Unauthorized" }), { status: 401, headers: { "Content-Type": "application/json" } });
+      const { id, is_active } = await request.json();
+      if (env.DB && id !== undefined) {
+        await env.DB.prepare("UPDATE service_categories SET is_active = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+          .bind(is_active ? 1 : 0, id).run();
+      }
+      return new Response(JSON.stringify({ ok: true }), { headers: { "Content-Type": "application/json" } });
+    }
+
     if (reqUrl.pathname === "/api/admin/category/save" && request.method === "POST") {
       if (!checkAdminAuth(request, env)) {
         return new Response(JSON.stringify({ ok: false, error: "Unauthorized" }), {
@@ -1942,7 +2119,7 @@ export default {
       }
       const db = env.DB;
       const body = await request.json();
-      const { id, code, title, description, order_priority } = body;
+      const { id, code, title, description, order_priority, is_active } = body;
 
       if (!code || !title) {
         return new Response(JSON.stringify({ ok: false, error: "کد و عنوان دسته‌بندی الزامی هستند." }), {
@@ -1951,21 +2128,22 @@ export default {
       }
 
       const prioNum = parseInt(order_priority || 0, 10);
+      const activeVal = is_active !== undefined ? (is_active ? 1 : 0) : 1;
       try {
         if (id) {
           await db.prepare(`
             UPDATE service_categories
-            SET code = ?, title = ?, description = ?, order_priority = ?
+            SET code = ?, title = ?, description = ?, order_priority = ?, is_active = ?, updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
-          `).bind(code.trim(), title.trim(), description || "", prioNum, id).run();
+          `).bind(code.trim(), title.trim(), description || "", prioNum, activeVal, id).run();
           return new Response(JSON.stringify({ ok: true, id: id, message: "دسته‌بندی با موفقیت ویرایش شد." }), {
             headers: { "Content-Type": "application/json" }
           });
         } else {
           const ins = await db.prepare(`
-            INSERT INTO service_categories (code, title, description, order_priority)
-            VALUES (?, ?, ?, ?)
-          `).bind(code.trim(), title.trim(), description || "", prioNum).run();
+            INSERT INTO service_categories (code, title, description, order_priority, is_active)
+            VALUES (?, ?, ?, ?, ?)
+          `).bind(code.trim(), title.trim(), description || "", prioNum, activeVal).run();
           return new Response(JSON.stringify({ ok: true, id: ins?.meta?.last_row_id || 0, message: "دسته‌بندی با موفقیت ایجاد شد." }), {
             headers: { "Content-Type": "application/json" }
           });
@@ -1984,14 +2162,17 @@ export default {
       let categories = [];
       if (db) {
         try {
-          const catRes = await db.prepare("SELECT * FROM service_categories ORDER BY order_priority ASC").all();
+          const catRes = await db.prepare("SELECT * FROM service_categories WHERE is_active = 1 AND deleted_at IS NULL ORDER BY order_priority ASC, id ASC").all();
           categories = catRes.results || [];
           const svcRes = await db.prepare(`
             SELECT s.*, c.title as category_title
             FROM service_items s
             LEFT JOIN service_categories c ON s.category_id = c.id
             WHERE s.is_active = 1
-            ORDER BY c.order_priority, s.order_priority
+              AND s.deleted_at IS NULL
+              AND (c.is_active = 1 OR c.is_active IS NULL)
+              AND (c.deleted_at IS NULL OR c.deleted_at IS '')
+            ORDER BY c.order_priority ASC, s.order_priority ASC, s.id ASC
           `).all();
           services = (svcRes.results || []).map(s => {
             let fields = {};
@@ -2054,7 +2235,7 @@ export default {
       let campaigns = [];
       if (db) {
         try {
-          const res = await db.prepare("SELECT * FROM seasonal_campaigns WHERE is_active = 1 AND deleted_at IS NULL ORDER BY start_at ASC").all();
+          const res = await db.prepare("SELECT * FROM seasonal_campaigns WHERE is_active = 1 AND deleted_at IS NULL ORDER BY order_priority ASC, start_at ASC").all();
           const now = new Date();
           campaigns = (res.results || []).map(c => {
             let dynamicStatus = c.status;
@@ -2412,7 +2593,7 @@ export default {
       return new Response(JSON.stringify({ ok: true }), { headers: { "Content-Type": "application/json" } });
     }
 
-    if (reqUrl.pathname === "/api/admin/customer/delete" && request.method === "POST") {
+    if ((reqUrl.pathname === "/api/admin/customer/delete" || reqUrl.pathname === "/api/admin/user/delete") && request.method === "POST") {
       if (!checkAdminAuth(request, env)) return new Response(JSON.stringify({ ok: false, error: "Unauthorized" }), { status: 401, headers: { "Content-Type": "application/json" } });
       const { id } = await request.json();
       if (env.DB && id) await env.DB.prepare("UPDATE users SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?").bind(id).run();
@@ -2433,7 +2614,7 @@ export default {
       return new Response(JSON.stringify({ ok: true }), { headers: { "Content-Type": "application/json" } });
     }
 
-    if (reqUrl.pathname === "/api/admin/seasonal/delete" && request.method === "POST") {
+    if ((reqUrl.pathname === "/api/admin/seasonal/delete" || reqUrl.pathname === "/api/admin/campaign/delete") && request.method === "POST") {
       if (!checkAdminAuth(request, env)) return new Response(JSON.stringify({ ok: false, error: "Unauthorized" }), { status: 401, headers: { "Content-Type": "application/json" } });
       const { id } = await request.json();
       if (env.DB && id) await env.DB.prepare("UPDATE seasonal_campaigns SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?").bind(id).run();
@@ -2447,10 +2628,59 @@ export default {
       return new Response(JSON.stringify({ ok: true }), { headers: { "Content-Type": "application/json" } });
     }
 
-    if (reqUrl.pathname === "/api/admin/monitors/delete" && request.method === "POST") {
+    if ((reqUrl.pathname === "/api/admin/monitors/delete" || reqUrl.pathname === "/api/admin/monitor/delete") && request.method === "POST") {
       if (!checkAdminAuth(request, env)) return new Response(JSON.stringify({ ok: false, error: "Unauthorized" }), { status: 401, headers: { "Content-Type": "application/json" } });
       const { id } = await request.json();
       if (env.DB && id) await env.DB.prepare("UPDATE website_monitors SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?").bind(id).run();
+      return new Response(JSON.stringify({ ok: true }), { headers: { "Content-Type": "application/json" } });
+    }
+
+    // تغییر مستقیم و روان اولویت نمایش (POST /api/admin/priority/update)
+    if (reqUrl.pathname === "/api/admin/priority/update" && request.method === "POST") {
+      if (!checkAdminAuth(request, env)) return new Response(JSON.stringify({ ok: false, error: "Unauthorized" }), { status: 401, headers: { "Content-Type": "application/json" } });
+      const { table, id, priority } = await request.json();
+      const tableMap = {
+        services: 'service_items',
+        service: 'service_items',
+        categories: 'service_categories',
+        category: 'service_categories',
+        campaigns: 'seasonal_campaigns',
+        campaign: 'seasonal_campaigns',
+        seasonal: 'seasonal_campaigns',
+        channels: 'communication_channels',
+        channel: 'communication_channels'
+      };
+      const sqlTable = tableMap[table];
+      if (sqlTable && id !== undefined && priority !== undefined && env.DB) {
+        await env.DB.prepare(`UPDATE ${sqlTable} SET order_priority = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`).bind(parseInt(priority, 10) || 0, id).run();
+        return new Response(JSON.stringify({ ok: true }), { headers: { "Content-Type": "application/json" } });
+      }
+      return new Response(JSON.stringify({ ok: false, error: "پارامترهای اولویت نامعتبر است." }), { status: 400, headers: { "Content-Type": "application/json" } });
+    }
+
+    // به‌روزرسانی دسته‌ای و اتمیک تنظیمات (POST /api/admin/settings/batch)
+    if (reqUrl.pathname === "/api/admin/settings/batch" && request.method === "POST") {
+      if (!checkAdminAuth(request, env)) return new Response(JSON.stringify({ ok: false, error: "Unauthorized" }), { status: 401, headers: { "Content-Type": "application/json" } });
+      const db = env.DB;
+      const body = await request.json();
+      const settings = body.settings || body;
+      if (db && typeof settings === 'object') {
+        const stmts = [];
+        for (const [k, v] of Object.entries(settings)) {
+          if (k && v !== undefined) {
+            stmts.push(db.prepare(`
+              INSERT INTO system_settings (key, value, updated_at)
+              VALUES (?, ?, CURRENT_TIMESTAMP)
+              ON CONFLICT(key) DO UPDATE SET
+                value = excluded.value,
+                updated_at = CURRENT_TIMESTAMP
+            `).bind(k, String(v)));
+          }
+        }
+        if (stmts.length > 0) {
+          await db.batch(stmts);
+        }
+      }
       return new Response(JSON.stringify({ ok: true }), { headers: { "Content-Type": "application/json" } });
     }
 
@@ -2691,7 +2921,7 @@ ${message}
     }
 
     // فعال / غیرفعال‌سازی وضعیت کانال ارتباطی
-    if (reqUrl.pathname === "/api/admin/channel/toggle" && request.method === "POST") {
+    if ((reqUrl.pathname === "/api/admin/channel/toggle" || reqUrl.pathname === "/api/admin/channel/status") && request.method === "POST") {
       if (!checkAdminAuth(request, env)) return new Response(JSON.stringify({ ok: false, error: "Unauthorized" }), { status: 401, headers: { "Content-Type": "application/json" } });
       const { id, is_active } = await request.json();
       if (env.DB && id !== undefined) {
@@ -3672,7 +3902,7 @@ ${message}
         let buttons = [];
         if (db) {
           try {
-            const catRes = await db.prepare("SELECT * FROM service_categories WHERE is_active = 1 AND deleted_at IS NULL ORDER BY order_priority ASC").all();
+            const catRes = await db.prepare("SELECT * FROM service_categories WHERE is_active = 1 AND deleted_at IS NULL ORDER BY order_priority ASC, id ASC").all();
             const cats = catRes.results || [];
             for (const c of cats) {
               buttons.push([{ text: c.title, callback_data: `cat_${c.code || c.id}` }]);
@@ -3727,10 +3957,10 @@ ${message}
         let categoryTitle = "این دسته‌بندی";
         if (db) {
           try {
-            const catInfo = await db.prepare("SELECT * FROM service_categories WHERE code = ? OR id = ?").bind(catCode, catCode).first();
+            const catInfo = await db.prepare("SELECT * FROM service_categories WHERE (code = ? OR id = ?) AND is_active = 1 AND deleted_at IS NULL").bind(catCode, catCode).first();
             if (catInfo) categoryTitle = catInfo.title;
 
-            const svcs = await db.prepare("SELECT s.*, c.title as cat_title FROM service_items s JOIN service_categories c ON s.category_id = c.id WHERE (c.code = ? OR c.id = ?) AND s.is_active = 1 ORDER BY s.order_priority ASC").bind(catCode, catCode).all();
+            const svcs = await db.prepare("SELECT s.*, c.title as cat_title FROM service_items s JOIN service_categories c ON s.category_id = c.id WHERE (c.code = ? OR c.id = ?) AND s.is_active = 1 AND s.deleted_at IS NULL AND c.is_active = 1 AND c.deleted_at IS NULL ORDER BY s.order_priority ASC, s.id ASC").bind(catCode, catCode).all();
             if (svcs.results && svcs.results.length > 0) {
               for (const s of svcs.results) {
                 catButtons.push([{ text: `🔹 ${s.title}`, callback_data: `svc_${s.code}` }]);
@@ -3867,10 +4097,14 @@ ${message}
               FROM service_items s 
               LEFT JOIN service_categories c ON s.category_id = c.id 
               WHERE s.code = ?
+                AND s.is_active = 1
+                AND s.deleted_at IS NULL
+                AND (c.is_active = 1 OR c.is_active IS NULL)
+                AND (c.deleted_at IS NULL OR c.deleted_at IS '')
             `).bind(code).first();
             if (svc) {
               const webappUrl = env.WEBAPP_URL || `https://${reqUrl.hostname}/webapp`;
-              const feeText = svc.base_fee ? `${Math.round(svc.base_fee / 10).toLocaleString('fa-IR')} تومان` : "تعرفه مصوب کافی‌نت";
+              const feeText = svc.base_fee ? `${Number(svc.base_fee).toLocaleString('fa-IR')} تومان` : "تعرفه مصوب کافی‌نت";
               const desc = (svc.description || "ارائه خدمات تخصصی و ثبت الکترونیکی در سامانه‌های رسمی کشور.").trim();
               const categoryTitle = svc.cat_title || "عمومی";
 
@@ -4126,7 +4360,7 @@ ${escapeHtml(desc)}
       // ۱۳. ثبت‌نام‌های مقطعی و دوره‌ای
       if (data === "seasonal_list") {
         if (db) {
-          const res = await db.prepare("SELECT * FROM seasonal_campaigns WHERE is_active = 1 AND deleted_at IS NULL ORDER BY start_at ASC").all();
+          const res = await db.prepare("SELECT * FROM seasonal_campaigns WHERE is_active = 1 AND deleted_at IS NULL ORDER BY order_priority ASC, start_at ASC").all();
           const camps = res.results || [];
           if (camps.length === 0) {
             return callbackReply("⏰ <b>ثبت‌نام‌های مقطعی و زمان‌دار</b>\n\nدر حال حاضر هیچ ثبت‌نام دوره‌ای یا مهلت‌داری فعال نیست.", {
@@ -4154,7 +4388,7 @@ ${escapeHtml(desc)}
               if (hoursLeft <= 48) badge = "🔥 مهلت رو به اتمام (تا " + endD + ")";
             }
 
-            text += `📌 <b>${c.title}</b>\nوضعیت: <b>${badge}</b>\n⏳ مهلت: از ${startD} تا ${endD}\n💰 تعرفه: ${(c.base_fee || 0).toLocaleString('fa-IR')} ریال\n\n`;
+            text += `📌 <b>${c.title}</b>\nوضعیت: <b>${badge}</b>\n⏳ مهلت: از ${startD} تا ${endD}\n💰 تعرفه: ${(Number(c.base_fee) || 0).toLocaleString('fa-IR')} تومان\n\n`;
             
             const row = [];
             if (canApply) {
@@ -4174,7 +4408,7 @@ ${escapeHtml(desc)}
       if (data.startsWith("remind_camp_")) {
         const campId = parseInt(data.replace("remind_camp_", ""), 10);
         if (db && campId) {
-          const camp = await db.prepare("SELECT * FROM seasonal_campaigns WHERE id = ?").bind(campId).first();
+          const camp = await db.prepare("SELECT * FROM seasonal_campaigns WHERE id = ? AND is_active = 1 AND deleted_at IS NULL").bind(campId).first();
           if (!camp) {
             return callbackReply("❌ رویداد مورد نظر یافت نشد.");
           }
@@ -4210,7 +4444,7 @@ ${escapeHtml(desc)}
       if (data.startsWith("apply_camp_")) {
         const campId = parseInt(data.replace("apply_camp_", ""), 10);
         if (db && campId) {
-          const camp = await db.prepare("SELECT * FROM seasonal_campaigns WHERE id = ?").bind(campId).first();
+          const camp = await db.prepare("SELECT * FROM seasonal_campaigns WHERE id = ? AND is_active = 1 AND deleted_at IS NULL").bind(campId).first();
           if (!camp) {
             return callbackReply("❌ رویداد مورد نظر یافت نشد.");
           }
@@ -4230,10 +4464,10 @@ ${escapeHtml(desc)}
               inline_keyboard: [[{ text: "🔙 بازگشت", callback_data: "seasonal_list" }]]
             });
           }
-          const webAppUrl = `https://limo-cafe-bot.bakhtar-visasup.workers.dev/webapp`;
+          const webAppUrl = env.WEBAPP_URL || `https://${reqUrl.hostname}/webapp`;
           return callbackReply(`📝 <b>ثبت‌نام در رویداد: ${camp.title}</b>\n\n` +
             `📌 <b>توضیحات:</b> ${camp.description || 'ثبت اینترنتی و بارگذاری مدارک'}\n` +
-            `💰 <b>تعرفه خدمت:</b> ${(camp.base_fee || 0).toLocaleString('fa-IR')} ریال\n` +
+            `💰 <b>تعرفه خدمت:</b> ${(Number(camp.base_fee) || 0).toLocaleString('fa-IR')} تومان\n` +
             `⏳ <b>مهلت باقی‌مانده:</b> تا ${(camp.end_at || '').slice(0, 10)}\n\n` +
             `جهت تکمیل فرم و ثبت پرونده روی دکمه زیر کلیک کنید:`, {
             inline_keyboard: [
