@@ -42,8 +42,7 @@ VUE_APP_SCRIPT = r'''
                 const seasonalCampaigns = ref([]);
                 const supportThreads = ref([]);
                 const communicationChannels = ref([]);
-                const websiteMonitors = ref([]);
-                const trashItems = ref([]);
+                                const trashItems = ref([]);
 
                 // فیلترهای سفارشات
                 const orderStatusFilter = ref('ALL');
@@ -93,6 +92,9 @@ VUE_APP_SCRIPT = r'''
                     code: '',
                     title: '',
                     description: '',
+                    guide_content: '',
+                    image_url: '',
+                    official_url: '',
                     base_fee: 0,
                     witness_fee: 3500000,
                     order_priority: 0,
@@ -138,18 +140,6 @@ VUE_APP_SCRIPT = r'''
                 const broadcastCampaign = ref(null);
                 const broadcastMessage = ref('');
                 const isBroadcasting = ref(false);
-
-                // مودال و پایش سامانه‌ها
-                const monitorModal = ref(false);
-                const monitorForm = ref({
-                    id: null,
-                    code: '',
-                    title: '',
-                    url: '',
-                    check_interval_minutes: 15,
-                    is_active: 1
-                });
-                const isCheckingMonitors = ref(false);
 
                 // مودال کانال ارتباطی
                 const channelModal = ref(false);
@@ -209,28 +199,35 @@ VUE_APP_SCRIPT = r'''
 
                 // مدیریت نشست و خروج خودکار امنیتی در صورت عدم فعالیت (Inactivity Timeout)
                 const INACTIVITY_TIMEOUT_MS = 20 * 60 * 1000; // ۲۰ دقیقه
-                let inactivityTimer = null;
-                let warningTimer = null;
+                let inactivityCheckInterval = null;
                 const showInactivityWarning = ref(false);
                 const remainingSeconds = ref(60);
+                let lastActivityTimestamp = Date.now();
 
-                function resetInactivityTimer() {
+                function recordUserActivity() {
+                    const now = Date.now();
+                    // کنترل فرکانس ذخیره‌سازی در حافظه مرورگر (حداکثر یک‌بار در هر ۲ ثانیه)
+                    if (now - lastActivityTimestamp > 2000) {
+                        lastActivityTimestamp = now;
+                        localStorage.setItem('limo_admin_last_activity', String(now));
+                    }
+                }
+
+                function isSessionExpired() {
+                    const token = localStorage.getItem('limo_admin_token');
+                    if (!token) return true;
+                    const savedTimeStr = localStorage.getItem('limo_admin_last_activity');
+                    if (!savedTimeStr) return false;
+                    const savedTime = parseInt(savedTimeStr, 10);
+                    if (isNaN(savedTime)) return false;
+                    return (Date.now() - savedTime > INACTIVITY_TIMEOUT_MS);
+                }
+
+                function checkSessionExpiry() {
                     if (!isAuthenticated.value) return;
-                    if (inactivityTimer) clearTimeout(inactivityTimer);
-                    if (warningTimer) clearInterval(warningTimer);
-                    showInactivityWarning.value = false;
-
-                    inactivityTimer = setTimeout(() => {
-                        showInactivityWarning.value = true;
-                        remainingSeconds.value = 60;
-                        warningTimer = setInterval(() => {
-                            remainingSeconds.value--;
-                            if (remainingSeconds.value <= 0) {
-                                clearInterval(warningTimer);
-                                logoutDueToInactivity();
-                            }
-                        }, 1000);
-                    }, INACTIVITY_TIMEOUT_MS - 60000);
+                    if (isSessionExpired()) {
+                        logoutDueToInactivity();
+                    }
                 }
 
                 function logoutDueToInactivity() {
@@ -240,8 +237,88 @@ VUE_APP_SCRIPT = r'''
                 }
 
                 function extendSession() {
-                    resetInactivityTimer();
+                    lastActivityTimestamp = Date.now();
+                    localStorage.setItem('limo_admin_last_activity', String(lastActivityTimestamp));
+                    showInactivityWarning.value = false;
                 }
+                // مدیریت مرتب‌سازی و کشیدن و رها کردن (Drag & Drop)
+                const draggedIndex = ref(null);
+                const draggedType = ref(null);
+                const dragOverIndex = ref(null);
+
+                function onDragStart(event, index, type) {
+                    draggedIndex.value = index;
+                    draggedType.value = type;
+                    if (event && event.dataTransfer) {
+                        event.dataTransfer.effectAllowed = 'move';
+                        try { event.dataTransfer.setData('text/plain', String(index)); } catch(e) {}
+                    }
+                }
+
+                function onDragOver(event, index) {
+                    dragOverIndex.value = index;
+                }
+
+                function onDragEnd() {
+                    draggedIndex.value = null;
+                    draggedType.value = null;
+                    dragOverIndex.value = null;
+                }
+
+                async function onDrop(event, targetIndex, type) {
+                    if (draggedIndex.value === null || draggedType.value !== type || draggedIndex.value === targetIndex) {
+                        onDragEnd();
+                        return;
+                    }
+
+                    let list = null;
+                    let endpointType = '';
+                    if (type === 'services') {
+                        list = filteredServices.value;
+                        endpointType = 'services';
+                    } else if (type === 'categories') {
+                        list = categories.value;
+                        endpointType = 'categories';
+                    } else if (type === 'campaigns') {
+                        list = seasonalCampaigns.value;
+                        endpointType = 'campaigns';
+                    } else if (type === 'channels') {
+                        list = communicationChannels.value;
+                        endpointType = 'channels';
+                    }
+
+                    if (!list || targetIndex < 0 || targetIndex >= list.length) {
+                        onDragEnd();
+                        return;
+                    }
+
+                    const fromIdx = draggedIndex.value;
+                    const toIdx = targetIndex;
+
+                    // جابه‌جایی المان در آرایه محلی
+                    const [movedItem] = list.splice(fromIdx, 1);
+                    list.splice(toIdx, 0, movedItem);
+
+                    // محاسبه مجدد اولویت‌ها به ترتیب جدید (بالاترین آیتم بیشترین اولویت را می‌گیرد)
+                    const total = list.length;
+                    const updates = [];
+                    list.forEach((item, idx) => {
+                        item.order_priority = (total - idx) * 10;
+                        updates.push({ id: item.id, priority: item.order_priority });
+                    });
+
+                    onDragEnd();
+
+                    // ارسال ترتیبی به سرور
+                    for (const u of updates) {
+                        fetchWithAuth('/api/admin/priority/update', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ table: endpointType, type: endpointType, id: u.id, priority: u.priority, order_priority: u.priority })
+                        }).catch(() => {});
+                    }
+                }
+
 
                 // محاسبات وضعیت‌ها
                 const pendingCount = computed(() => orders.value.filter(o => o.status === 'PENDING').length);
@@ -326,8 +403,7 @@ VUE_APP_SCRIPT = r'''
                         if (data.ok) {
                             stats.value = data.stats || stats.value;
                             orders.value = data.orders || [];
-                            websiteMonitors.value = data.monitors || [];
-                        }
+                                                    }
                         await Promise.all([
                             fetchCustomers(),
                             fetchServices(),
@@ -359,8 +435,7 @@ VUE_APP_SCRIPT = r'''
                     else if (currentTab.value === 'wallets') fetchWallets();
                     else if (currentTab.value === 'seasonal') fetchCampaigns();
                     else if (currentTab.value === 'chats') fetchSupportThreads();
-                    else if (currentTab.value === 'monitors') fetchWithAuth('/api/admin/data');
-                    else if (currentTab.value === 'channels') fetchChannels();
+                                        else if (currentTab.value === 'channels') fetchChannels();
                     else if (currentTab.value === 'trash') fetchTrashItems();
                     else if (currentTab.value === 'settings') { fetchSettings(); fetchOperators(); }
                     else if (currentTab.value === 'settings') fetchSettings();
@@ -594,6 +669,9 @@ VUE_APP_SCRIPT = r'''
                         code: '',
                         title: '',
                         description: '',
+                        guide_content: '',
+                        image_url: '',
+                        official_url: '',
                         base_fee: 0,
                         witness_fee: 3500000,
                         order_priority: 0,
@@ -604,7 +682,12 @@ VUE_APP_SCRIPT = r'''
                 }
 
                 function editService(s) {
-                    serviceForm.value = { ...s };
+                    serviceForm.value = {
+                        ...s,
+                        guide_content: s.guide_content || '',
+                        image_url: s.image_url || '',
+                        official_url: s.official_url || ''
+                    };
                     customFields.value = [];
                     if (s.required_fields && typeof s.required_fields === 'object') {
                         customFields.value = Object.entries(s.required_fields).map(([k, v], idx) => ({
@@ -961,56 +1044,6 @@ VUE_APP_SCRIPT = r'''
                 }
 
                 // پایش سامانه‌ها
-                async function checkAllMonitorsNow() {
-                    isCheckingMonitors.value = true;
-                    try {
-                        const res = await fetchWithAuth('/api/admin/monitors/check-all', { method: 'POST' });
-                        const data = await res.json();
-                        if (data.ok) {
-                            alert(`✅ پایش بلادرنگ با موفقیت انجام شد (${data.count} سامانه بررسی گردید).`);
-                            const r = await fetchWithAuth('/api/admin/data');
-                            const d = await r.json();
-                            if (d.ok) websiteMonitors.value = d.monitors || [];
-                        }
-                    } catch(e) {
-                        alert("خطا در پایش سامانه‌ها.");
-                    } finally {
-                        isCheckingMonitors.value = false;
-                    }
-                }
-
-                function openNewMonitorModal() {
-                    monitorForm.value = { id: null, code: '', title: '', url: '', check_interval_minutes: 15, is_active: 1 };
-                    monitorModal.value = true;
-                }
-
-                function editMonitor(m) {
-                    monitorForm.value = { ...m };
-                    monitorModal.value = true;
-                }
-
-                async function saveMonitorForm() {
-                    if (!monitorForm.value.title || !monitorForm.value.url) return;
-                    try {
-                        const res = await fetchWithAuth('/api/admin/monitors/save', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify(monitorForm.value)
-                        });
-                        const data = await res.json();
-                        if (data.ok) {
-                            alert("✅ سامانه پایش با موفقیت ذخیره شد.");
-                            monitorModal.value = false;
-                            const r = await fetchWithAuth('/api/admin/data');
-                            const d = await r.json();
-                            if (d.ok) websiteMonitors.value = d.monitors || [];
-                        }
-                    } catch(e) {
-                        alert("خطا در ذخیره سامانه.");
-                    }
-                }
-
-                // راه‌های ارتباطی
                 async function fetchChannels() {
                     try {
                         const res = await fetchWithAuth('/api/admin/channels');
@@ -1381,8 +1414,7 @@ VUE_APP_SCRIPT = r'''
                         wallets: 'کیف پول کاربران و دفاتر تراکنش‌های مالی',
                         seasonal: 'ثبت‌نام‌های مقطعی، کنکور و آزمون‌ها',
                         chats: 'مرکز گفتگوی زنده و تیکت‌های پشتیبانی',
-                        monitors: 'پایش هوشمند وضعیت و دسترس‌پذیری سامانه‌ها',
-                        channels: 'مدیریت راه‌های ارتباطی و تماس',
+                                                channels: 'مدیریت راه‌های ارتباطی و تماس',
                         trash: 'سطل زباله ۳۰ روزه و بایگانی امن',
                         backup: 'پشتیبان‌گیری کامل از پایگاه داده و خروجی اکسل',
                         settings: 'تنظیمات کاربردی و پل اتصال سیستم کافی‌نت'
@@ -1480,17 +1512,40 @@ VUE_APP_SCRIPT = r'''
                     updateLivePersianDate();
                     const token = localStorage.getItem('limo_admin_token');
                     if (token) {
-                        isAuthenticated.value = true;
-                        adminUser.value.username = localStorage.getItem('limo_admin_username') || 'admin';
-                        refreshData();
-                        resetInactivityTimer();
+                        if (isSessionExpired()) {
+                            logoutDueToInactivity();
+                        } else {
+                            isAuthenticated.value = true;
+                            adminUser.value.username = localStorage.getItem('limo_admin_username') || 'admin';
+                            lastActivityTimestamp = parseInt(localStorage.getItem('limo_admin_last_activity') || String(Date.now()), 10);
+                            refreshData();
+                        }
                     }
+
+                    // شنود تعاملات کاربر برای تمدید خودکار نشست فعال
                     ['mousemove', 'mousedown', 'keydown', 'touchstart', 'scroll'].forEach(evt => {
-                        window.addEventListener(evt, resetInactivityTimer, { passive: true });
+                        window.addEventListener(evt, recordUserActivity, { passive: true });
                     });
+
+                    // بررسی وضعیت نشست هنگام بازگشت کاربر به تب مرورگر
+                    document.addEventListener('visibilitychange', () => {
+                        if (document.visibilityState === 'visible' && isAuthenticated.value) {
+                            checkSessionExpiry();
+                        }
+                    });
+
+                    // تایمر دوره‌ای بررسی عدم فعالیت (هر ۱۰ ثانیه)
+                    inactivityCheckInterval = setInterval(checkSessionExpiry, 10000);
                 });
 
                 return {
+                    draggedIndex,
+                    draggedType,
+                    dragOverIndex,
+                    onDragStart,
+                    onDragOver,
+                    onDragEnd,
+                    onDrop,
                     settingsActiveSubTab,
                     operatorsList,
                     operatorModal,
@@ -1532,8 +1587,7 @@ VUE_APP_SCRIPT = r'''
                     seasonalCampaigns,
                     supportThreads,
                     communicationChannels,
-                    websiteMonitors,
-                    trashItems,
+                                        trashItems,
                     orderStatusFilter,
                     orderSearchQuery,
                     customerSearchQuery,
@@ -1615,14 +1669,7 @@ VUE_APP_SCRIPT = r'''
                     isSendingReply,
                     sendSupportReply,
                     changeThreadStatus,
-                    checkAllMonitorsNow,
-                    isCheckingMonitors,
-                    openNewMonitorModal,
-                    editMonitor,
-                    monitorModal,
-                    monitorForm,
-                    saveMonitorForm,
-                    openChannelEdit,
+                                                                                                                                                                openChannelEdit,
                     channelModal,
                     channelForm,
                     saveChannelForm,

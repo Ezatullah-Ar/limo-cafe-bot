@@ -432,8 +432,24 @@ MODALS_HTML = r'''
                     </div>
 
                     <div>
-                        <label class="block font-bold text-slate-700 mb-1">توضیحات و راهنمای متقاضی</label>
-                        <textarea v-model="serviceForm.description" rows="2" class="w-full px-3 py-2 border border-slate-200 rounded-xl"></textarea>
+                        <label class="block font-bold text-slate-700 mb-1">توضیحات کوتاه خدمت</label>
+                        <textarea v-model="serviceForm.description" rows="2" class="w-full px-3 py-2 border border-slate-200 rounded-xl" placeholder="توضیح کوتاه خدمت که در کارت خدمات نمایش داده می‌شود"></textarea>
+                    </div>
+
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <div>
+                            <label class="block font-bold text-slate-700 mb-1">🖼️ آدرس تصویر / بنر خدمت (URL)</label>
+                            <input v-model="serviceForm.image_url" type="text" placeholder="https://example.com/banner.png یا /logo.png" class="w-full px-3 py-2 border border-slate-200 rounded-xl font-mono text-left">
+                        </div>
+                        <div>
+                            <label class="block font-bold text-slate-700 mb-1">🔗 نشانی سامانه رسمی (اختیاری)</label>
+                            <input v-model="serviceForm.official_url" type="text" placeholder="https://sanjesh.org" class="w-full px-3 py-2 border border-slate-200 rounded-xl font-mono text-left">
+                        </div>
+                    </div>
+
+                    <div>
+                        <label class="block font-bold text-slate-700 mb-1">📖 راهنمای تفصیلی و شرایط اختصاصی خدمت</label>
+                        <textarea v-model="serviceForm.guide_content" rows="3" class="w-full px-3 py-2 border border-slate-200 rounded-xl" placeholder="متن کامل راهنما، شرایط، مدارک لازم و نکات مهم که در صفحه اختصاصی خدمت (قبل از فرم سفارش) نمایش داده می‌شود..."></textarea>
                     </div>
 
                     <!-- تنظیم هزینه شاهدان برای خدمت کد رهگیری مسکن -->
@@ -655,40 +671,6 @@ MODALS_HTML = r'''
                     <div class="pt-2 flex justify-end gap-2">
                         <button type="button" @click="campaignModal = false" class="px-4 py-2 bg-slate-100 rounded-xl font-bold text-slate-600">انصراف</button>
                         <button type="submit" class="px-5 py-2 bg-gradient-to-r from-limo-500 to-lime-600 hover:from-limo-400 hover:to-lime-500 text-slate-950 font-black rounded-xl">ذخیره رویداد مقطعی</button>
-                    </div>
-                </form>
-            </div>
-        </div>
-
-        <!-- ======================================================== -->
-        <!-- مودال ۹: ویرایش و ایجاد پایش سامانه (Monitor Modal) -->
-        <!-- ======================================================== -->
-        <div v-if="monitorModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-sm">
-            <div class="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-100 text-right space-y-4">
-                <div class="flex justify-between items-center border-b border-slate-100 pb-3">
-                    <h3 class="font-black text-sm text-slate-900">{{ monitorForm.id ? 'ویرایش سامانه پایش' : '➕ افزودن سامانه برای پایش' }}</h3>
-                    <button @click="monitorModal = false" class="p-1 text-slate-400 hover:text-slate-600">✕</button>
-                </div>
-                <form @submit.prevent="saveMonitorForm" class="space-y-3 text-xs">
-                    <div>
-                        <label class="block font-bold text-slate-700 mb-1">عنوان سامانه <span class="text-rose-500">*</span></label>
-                        <input v-model="monitorForm.title" type="text" required placeholder="مثال: سامانه نوبت‌دهی تثبیت هویت" class="w-full px-3 py-2 border border-slate-200 rounded-xl">
-                    </div>
-                    <div>
-                        <label class="block font-bold text-slate-700 mb-1">کد یکتا <span class="text-rose-500">*</span></label>
-                        <input v-model="monitorForm.code" type="text" required placeholder="IVSF" class="w-full px-3 py-2 border border-slate-200 rounded-xl font-mono">
-                    </div>
-                    <div>
-                        <label class="block font-bold text-slate-700 mb-1">نشانی اینترنتی سامانه (URL) <span class="text-rose-500">*</span></label>
-                        <input v-model="monitorForm.url" type="url" required placeholder="http://ivsf.nsia.gov.af/" class="w-full px-3 py-2 border border-slate-200 rounded-xl font-mono">
-                    </div>
-                    <div>
-                        <label class="block font-bold text-slate-700 mb-1">فاصله بررسی خودکار (دقیقه)</label>
-                        <input v-model.number="monitorForm.check_interval_minutes" type="number" placeholder="15" class="w-full px-3 py-2 border border-slate-200 rounded-xl font-mono">
-                    </div>
-                    <div class="pt-2 flex justify-end gap-2">
-                        <button type="button" @click="monitorModal = false" class="px-4 py-2 bg-slate-100 rounded-xl font-bold text-slate-600">انصراف</button>
-                        <button type="submit" class="px-5 py-2 bg-slate-900 text-white font-bold rounded-xl">ذخیره سامانه</button>
                     </div>
                 </form>
             </div>

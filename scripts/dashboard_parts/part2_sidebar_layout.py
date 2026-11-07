@@ -112,15 +112,6 @@ SIDEBAR_AND_LAYOUT = r'''
                                 </span>
                             </button>
 
-                            <!-- پایش هوشمند سایت‌ها -->
-                            <button @click="switchTab('monitors')"
-                                :class="{'border-r-4 border-limo-400 bg-gradient-to-l from-limo-500/20 via-emerald-500/10 to-transparent text-white font-black shadow-sm': currentTab === 'monitors', 'text-slate-400 hover:bg-emerald-950/40 hover:text-white': currentTab !== 'monitors'}"
-                                class="w-full px-3 py-2 rounded-xl transition flex items-center justify-between text-right">
-                                <span class="flex items-center gap-2.5">
-                                    <span class="text-sm">🌐</span>
-                                    <span>پایش هوشمند سایت‌ها</span>
-                                </span>
-                            </button>
                         </div>
 
                         <!-- بخش ۳: امور مشتریان و مالی -->

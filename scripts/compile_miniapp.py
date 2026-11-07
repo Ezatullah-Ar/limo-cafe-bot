@@ -5,7 +5,7 @@ html_content = """<!DOCTYPE html>
 <html lang="fa" dir="rtl">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>پورتال مشتریان کافی نت لیمو | Limo Cafe Portal</title>
     
     <!-- Telegram WebApp SDK -->
@@ -17,7 +17,8 @@ html_content = """<!DOCTYPE html>
     <!-- Preconnect & Persian Font Stack -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@300;400;500;600;700;800;900&display=swap" media="print" onload="this.media='all'">
+    <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@300;400;500;600;700;800;900&display=swap"></noscript>
     <link rel="icon" type="image/png" href="/logo.png">
 
     <!-- Tailwind CSS (Play CDN with custom config) -->
@@ -67,7 +68,7 @@ html_content = """<!DOCTYPE html>
             color: #0f172a;
             font-family: 'Vazirmatn', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'IranSans', Tahoma, sans-serif;
             margin: 0;
-            padding-bottom: 90px;
+            padding-bottom: calc(90px + env(safe-area-inset-bottom, 0px));
             -webkit-tap-highlight-color: transparent;
         }
 
@@ -142,9 +143,14 @@ html_content = """<!DOCTYPE html>
         <!-- ======================================================== -->
         <header class="sticky top-0 z-30 glass-header px-4 py-3 border-b border-slate-100 flex items-center justify-between shadow-sm">
             <div class="flex items-center gap-2.5 cursor-pointer" @click="currentTab = 'home'">
-                <div class="relative">
-                    <img src="/logo.png" alt="کافی نت لیمو" class="h-9 w-auto object-contain" :class="{'limo-motion-float': motionGraphicsEnabled !== '0'}">
-                    <span v-if="shopIsOpen" class="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 bg-emerald-500 rounded-full border-2 border-white" :class="{'limo-motion-pulse': motionGraphicsEnabled !== '0'}"></span>
+                <div class="relative w-9 h-9 rounded-xl overflow-hidden bg-slate-100 flex items-center justify-center border border-slate-200/60 shadow-sm">
+                    <!-- موشن‌گرافیک فوق‌سبک سخت‌افزاری لوگو با پوستر ۲.۸ کیلوبایتی -->
+                    <video v-if="motionGraphicsEnabled !== '0'" autoplay loop muted playsinline poster="/motion-logo-poster.webp" class="w-full h-full object-cover">
+                        <source src="/motion-logo.mp4" type="video/mp4">
+                        <img src="/motion-logo-poster.webp" alt="کافی نت لیمو" class="w-full h-full object-cover">
+                    </video>
+                    <img v-else src="/motion-logo-poster.webp" alt="کافی نت لیمو" class="w-full h-full object-cover">
+                    <span v-if="shopIsOpen" class="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 bg-emerald-500 rounded-full border-2 border-white"></span>
                 </div>
                 <div>
                     <h1 class="text-xs font-black text-slate-900 leading-none">کافی‌نت آنلاین لیمو</h1>
@@ -175,6 +181,17 @@ html_content = """<!DOCTYPE html>
 
         <!-- کانتینر اصلی محتوا -->
         <main class="p-4 space-y-4 flex-1">
+
+            <!-- هشدار اختلال شبکه / نمایش کاتالوگ آفلاین -->
+            <div v-if="networkError" class="p-3 bg-amber-50 border border-amber-200/80 text-amber-900 text-xs rounded-2xl flex items-center justify-between shadow-soft">
+                <div class="flex items-center gap-2">
+                    <span class="text-base">⚠️</span>
+                    <span class="text-[11px] leading-tight">اتصال اینترنتی با سرور با کندی مواجه شد؛ اطلاعات کاتالوگ آفلاین نمایش داده می‌شوند.</span>
+                </div>
+                <button @click="loadInitialData(true)" :disabled="isLoadingData" class="px-2.5 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded-xl font-bold text-[11px] transition shadow-sm whitespace-nowrap">
+                    {{ isLoadingData ? 'در حال بررسی...' : 'تلاش مجدد 🔄' }}
+                </button>
+            </div>
 
             <!-- ======================================================== -->
             <!-- ۲. صفحه اصلی (خانه - Home Tab) -->
@@ -359,11 +376,102 @@ html_content = """<!DOCTYPE html>
                         
                         <div class="pt-2 border-t border-slate-50 flex items-center justify-between">
                             <span class="text-[10px] text-slate-400 font-medium">⚡ انجام آنلاین و پیگیری لحظه‌ای</span>
-                            <button @click="openServiceForm(s)"
-                                class="px-4 py-2 bg-gradient-to-r from-limo-500 to-lime-600 hover:from-limo-400 hover:to-lime-500 text-slate-950 font-black rounded-xl text-xs transition shadow-sm">
-                                شروع و تکمیل فرم
-                            </button>
+                            <div class="flex gap-1.5">
+                                <button @click="openServiceDetail(s)"
+                                    class="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs transition">
+                                    توضیحات و راهنما 📋
+                                </button>
+                                <button @click="openServiceForm(s)"
+                                    class="px-3.5 py-1.5 bg-gradient-to-r from-limo-500 to-lime-600 hover:from-limo-400 hover:to-lime-500 text-slate-950 font-black rounded-xl text-xs transition shadow-sm">
+                                    ثبت سفارش
+                                </button>
+                            </div>
                         </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ======================================================== -->
+            <!-- صفحه اختصاصی توضیحات، راهنما و شرایط خدمت (Service Detail) -->
+            <!-- ======================================================== -->
+            <div v-if="currentTab === 'service_detail'" class="space-y-4 limo-motion-pop">
+                <div class="bg-white rounded-3xl p-5 border border-slate-100 shadow-soft space-y-4">
+                    <!-- سربرگ خدمت با دکمه بازگشت -->
+                    <div class="flex justify-between items-center border-b border-slate-100 pb-3">
+                        <div class="space-y-0.5">
+                            <span class="text-[10px] text-limo-700 font-bold block">{{ selectedService?.category || 'خدمت آنلاین' }}</span>
+                            <h2 class="text-sm font-black text-slate-900">{{ selectedService?.title }}</h2>
+                        </div>
+                        <button @click="currentTab = 'services'" class="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl text-xs font-bold transition">
+                            🔙 بازگشت
+                        </button>
+                    </div>
+
+                    <!-- تصویر یا بنر خدمت (در صورت وجود) -->
+                    <div v-if="selectedService?.image_url" class="rounded-2xl overflow-hidden border border-slate-100 max-h-48 flex items-center justify-center bg-slate-50">
+                        <img :src="selectedService.image_url" :alt="selectedService.title" class="w-full h-full object-cover">
+                    </div>
+
+                    <!-- جعبه تعرفه مصوب خدمت -->
+                    <div class="p-3 bg-gradient-to-r from-limo-50 to-lime-50 rounded-2xl border border-limo-200/60 flex justify-between items-center">
+                        <div class="space-y-0.5">
+                            <span class="text-[10px] text-slate-500 font-medium">تعرفه مصوب کافی‌نت:</span>
+                            <div class="text-sm font-black text-slate-900">{{ formatTomans(selectedService?.base_fee) }}</div>
+                        </div>
+                        <span class="px-2.5 py-1 bg-white/80 rounded-xl text-[10px] font-bold text-limo-800 border border-limo-200">
+                            ⚡ ثبت و پیگیری الکترونیکی
+                        </span>
+                    </div>
+
+                    <!-- توضیحات و راهنمای مراحل انجام کار -->
+                    <div class="space-y-2">
+                        <h3 class="text-xs font-black text-slate-900 flex items-center gap-1.5">
+                            <span>📋</span>
+                            <span>توضیحات و شرایط انجام کار:</span>
+                        </h3>
+                        <div class="text-xs text-slate-600 leading-relaxed bg-slate-50 p-3.5 rounded-2xl border border-slate-100 whitespace-pre-line">
+                            {{ selectedService?.guide_content || selectedService?.desc || 'انجام کلیه مراحل ثبت‌نام، پیگیری و دریافت مدارک توسط کارشناس کافی‌نت لیمو.' }}
+                        </div>
+                    </div>
+
+                    <!-- سامانه یا درگاه رسمی مربوطه -->
+                    <div v-if="selectedService?.official_url" class="p-3 bg-blue-50/60 rounded-2xl border border-blue-100 flex justify-between items-center text-xs">
+                        <div class="flex items-center gap-2">
+                            <span>🏛</span>
+                            <span class="font-bold text-blue-900">سامانه رسمی استعلام/ثبت‌نام:</span>
+                        </div>
+                        <a :href="selectedService.official_url" target="_blank" class="text-[11px] font-black text-blue-600 hover:underline flex items-center gap-1">
+                            <span>مشاهده درگاه</span>
+                            <span>↗</span>
+                        </a>
+                    </div>
+
+                    <!-- مدارک و الزامات مورد نیاز -->
+                    <div v-if="selectedService?.required_docs && selectedService.required_docs.length > 0" class="space-y-2">
+                        <h3 class="text-xs font-black text-slate-900 flex items-center gap-1.5">
+                            <span>📑</span>
+                            <span>مدارک و اطلاعات الزامی برای ثبت:</span>
+                        </h3>
+                        <ul class="space-y-1.5 text-xs text-slate-700 bg-slate-50/70 p-3.5 rounded-2xl border border-slate-100">
+                            <li v-for="(doc, idx) in selectedService.required_docs" :key="idx" class="flex items-center gap-2">
+                                <span class="text-emerald-500 font-bold">✓</span>
+                                <span>{{ doc }}</span>
+                            </li>
+                        </ul>
+                    </div>
+
+                    <!-- دکمه‌های اقدام -->
+                    <div class="pt-2 space-y-2">
+                        <button @click="openServiceForm(selectedService)"
+                            class="w-full py-3 bg-gradient-to-r from-limo-500 to-lime-600 hover:from-limo-400 hover:to-lime-500 text-slate-950 font-black rounded-2xl text-xs transition shadow-sm flex items-center justify-center gap-2">
+                            <span>تکمیل اطلاعات و ثبت درخواست</span>
+                            <span>📝</span>
+                        </button>
+                        <button @click="currentTab = 'chat'"
+                            class="w-full py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-2xl text-xs transition flex items-center justify-center gap-2">
+                            <span>گفت‌وگو با پشتیبان درباره این خدمت</span>
+                            <span>💬</span>
+                        </button>
                     </div>
                 </div>
             </div>
@@ -377,7 +485,9 @@ html_content = """<!DOCTYPE html>
                         <span class="text-[10px] text-limo-700 font-bold block">فرم ثبت درخواست آنلاین</span>
                         <h2 class="text-sm font-black text-slate-900">{{ selectedService?.title }}</h2>
                     </div>
-                    <button @click="currentTab = 'services'" class="p-1.5 text-slate-400 hover:text-slate-600 text-xs">✕ بازگشت</button>
+                    <button @click="currentTab = 'service_detail'" class="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl text-xs font-bold transition">
+                        ← راهنمای خدمت
+                    </button>
                 </div>
 
                 <div v-if="orderError" class="p-3 bg-rose-50 border border-rose-200 text-rose-700 text-xs rounded-xl font-medium">
@@ -629,6 +739,23 @@ html_content = """<!DOCTYPE html>
                     </div>
                 </div>
 
+                <!-- پخش‌کننده موشن‌گرافیک رسمی برند در بخش درباره ما -->
+                <div v-if="motionGraphicsEnabled !== '0'" class="bg-white rounded-3xl p-4 border border-slate-100 shadow-soft space-y-2.5">
+                    <div class="flex justify-between items-center px-1">
+                        <h3 class="text-xs font-black text-slate-900 flex items-center gap-1.5">
+                            <span>🎬</span>
+                            <span>تیزر موشن‌گرافیک رسمی کافی‌نت لیمو:</span>
+                        </h3>
+                        <span class="text-[9px] font-bold text-limo-800 bg-limo-100 px-2 py-0.5 rounded-full">نسخه اختصاصی وب</span>
+                    </div>
+                    <div class="rounded-2xl overflow-hidden border border-slate-200/80 bg-slate-950 aspect-video flex items-center justify-center shadow-inner">
+                        <video controls playsinline poster="/motion-logo-poster.webp" class="w-full h-full object-contain">
+                            <source src="/motion-logo.mp4" type="video/mp4">
+                            مرورگر شما از پخش ویدیو پشتیبانی نمی‌کند.
+                        </video>
+                    </div>
+                </div>
+
                 <!-- مزایای کلیدی لیمو -->
                 <div class="space-y-2">
                     <h3 class="text-xs font-black text-slate-900 px-1 flex items-center gap-1.5">
@@ -689,7 +816,7 @@ html_content = """<!DOCTYPE html>
         <!-- ======================================================== -->
         <!-- ۹. نوار ناوبری شناور و مدرن پایین صفحه (Bottom Nav Bar) -->
         <!-- ======================================================== -->
-        <nav class="fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-xl border-t border-slate-200 shadow-nav max-w-md mx-auto">
+        <nav class="fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-xl border-t border-slate-200 shadow-nav max-w-md md:max-w-xl mx-auto" style="padding-bottom: max(env(safe-area-inset-bottom, 0px), 6px);">
             <div class="grid grid-cols-5 py-2 px-1 text-center">
                 <button @click="currentTab = 'home'"
                     :class="currentTab === 'home' ? 'text-limo-700 font-black' : 'text-slate-400 hover:text-slate-600 font-medium'"
@@ -698,7 +825,7 @@ html_content = """<!DOCTYPE html>
                     <span class="text-[10px]">خانه</span>
                 </button>
                 <button @click="currentTab = 'services'"
-                    :class="currentTab === 'services' || currentTab === 'order_form' ? 'text-limo-700 font-black' : 'text-slate-400 hover:text-slate-600 font-medium'"
+                    :class="currentTab === 'services' || currentTab === 'service_detail' || currentTab === 'order_form' ? 'text-limo-700 font-black' : 'text-slate-400 hover:text-slate-600 font-medium'"
                     class="py-1 flex flex-col items-center gap-0.5 transition">
                     <span class="text-lg">📋</span>
                     <span class="text-[10px]">خدمات</span>
@@ -730,6 +857,144 @@ html_content = """<!DOCTYPE html>
 
     <!-- منطق جاوااسکریپت و Vue 3 مینی‌اپلیکیشن -->
     <script>
+
+        // کاتالوگ پشتیبان آفلاین (Offline Fallback Catalog) جهت لود آنی و بدون فریز در پروکسی تلگرام
+        const FALLBACK_BOOTSTRAP_DATA = {
+            categories: [
+                { id: 7, code: 'TAX', title: '💼 امور مالیاتی و اصناف', description: 'خدمات اظهارنامه، ثبت نام مالیاتی و پرونده اصناف' },
+                { id: 4, code: 'GOVERNMENT_INTERNET', title: '🏛 سایر خدمات اینترنتی و اداری', description: 'انواع ثبت‌نام‌ها و خدمات اداری و دولتی الکترونیک' },
+                { id: 3, code: 'TICKETS_TRAVEL', title: '✈️ بلیت هواپیما، قطار و اتوبوس', description: 'صدور و استعلام بلیت کلیه خطوط ریلی، پروازی و جاده‌ای کشور' },
+                { id: 2, code: 'UNIVERSITY_SERVICES', title: '🎓 خدمات دانشگاهی و آزمون‌ها', description: 'امور ثبت‌نام آزمون‌های سراسری، تاییدیه تحصیلی و سامانه‌های آموزشی' },
+                { id: 1, code: 'ALIEN_AND_CODES', title: '🌐 امور اتباع و کدها', description: 'نوبت‌دهی تثبیت هویت، سامانه امور دانشجویان بین‌الملل و پذیرش اتباع' }
+            ],
+            services: [
+                {
+                    id: 1, category_id: 1, code: 'EMT_VERIFICATION', title: 'استعلام تاییدیه تحصیلی و کد صحت',
+                    desc: 'دریافت استعلام رسمی مدرک دیپلم و پیش‌دانشگاهی از سامانه وزارت آموزش و پرورش (emt.medu.ir) جهت ثبت‌نام دانشگاه.',
+                    guide_content: 'مراحل انجام کار:\n۱. ثبت مشخصات فردی و تحصیلی داوطلب\n۲. دریافت کد پیگیری استعلام از سامانه وزارت آموزش و پرورش\n۳. ارسال به دانشگاه یا سازمان استعلام‌گیرنده\n\nمدارک لازم: تصویر گواهی موقت دیپلم یا مدرک پایان تحصیلات به همراه کد ملی ۱۰ رقمی.',
+                    official_url: 'https://emt.medu.ir/',
+                    category: '🎓 خدمات دانشجویی و آزمون‌ها', base_fee: 50000,
+                    required_fields: [
+                        { key: 'national_id', label: 'کد ملی ۱۰ رقمی متقاضی', type: 'text', required: true },
+                        { key: 'education_level', label: 'مقطع تحصیلی (دیپلم / پیش‌دانشگاهی)', type: 'text', required: true },
+                        { key: 'school_name', label: 'نام دبیرستان یا مدرسه محل تحصیل', type: 'text', required: true },
+                        { key: 'graduation_year', label: 'سال فراغت از تحصیل', type: 'text', required: true },
+                        { key: 'destination_org', label: 'نام دانشگاه یا سازمان استعلام‌گیرنده', type: 'text', required: true }
+                    ],
+                    required_docs: ['تصویر مدرک تحصیلی یا گواهی موقت', 'تصویر کارت ملی یا شناسنامه']
+                },
+                {
+                    id: 2, category_id: 1, code: 'SANJESH_REGISTRATION', title: 'ثبت‌نام آزمون‌های سازمان سنجش',
+                    desc: 'ثبت‌نام، ویرایش اطلاعات، دریافت کد سوابق تحصیلی مای‌مدیو و آزمون‌های سراسری سازمان سنجش.',
+                    guide_content: 'راهنمای ثبت‌نام:\n۱. بررسی شرایط دفترچه آزمون مورد نظر\n۲. تایید سوابق تحصیلی در سامانه مای مدیو\n۳. تکمیل فرم اینترنتی و دریافت شماره پرونده و کد پیگیری نهایی.',
+                    official_url: 'https://www.sanjesh.org/',
+                    category: '🎓 خدمات دانشجویی و آزمون‌ها', base_fee: 65000,
+                    required_fields: [
+                        { key: 'exam_type', label: 'نوع آزمون (سراسری / کارشناسی ارشد / دکتری)', type: 'text', required: true },
+                        { key: 'national_id', label: 'کد ملی داوطلب', type: 'text', required: true },
+                        { key: 'mobile_phone', label: 'شماره همراه به نام متقاضی', type: 'tel', required: true }
+                    ],
+                    required_docs: ['عکس پرسنلی ۴×۳ استاندارد', 'تصویر کارنامه یا مدرک مقطع قبلی']
+                },
+                {
+                    id: 3, category_id: 1, code: 'PNU_SERVICES', title: 'سامانه گلستان دانشگاه پیام نور',
+                    desc: 'امور انتخاب واحد، کارنامه، گواهی اشتغال به تحصیل، تسویه حساب و امور مالی در سامانه جامع گلستان پیام نور.',
+                    guide_content: 'راهنما:\nامور آموزشی و اداری شامل صدور گواهی اشتغال، پرینت فرم‌های امتحانی، تسویه شهریه و کارنامه تحصیلی بدون نیاز به مراجعه حضوری انجام می‌پذیرد.',
+                    official_url: 'https://osreg.pnu.ac.ir/forms/authenticateuser/main.htm',
+                    category: '🎓 خدمات دانشجویی و آزمون‌ها', base_fee: 45000,
+                    required_fields: [
+                        { key: 'student_id', label: 'شماره دانشجویی گلستان', type: 'text', required: true },
+                        { key: 'national_id', label: 'کد ملی دانشجو', type: 'text', required: true },
+                        { key: 'request_type', label: 'نوع درخواست (انتخاب واحد / گواهی / کارنامه)', type: 'text', required: true }
+                    ],
+                    required_docs: ['تصویر کارت دانشجویی']
+                },
+                {
+                    id: 4, category_id: 1, code: 'IAU_SERVICES', title: 'سامانه آموزشیار دانشگاه آزاد اسلامی',
+                    desc: 'انتخاب واحد، پرداخت شهریه، اخذ مجوز امتحان، مشاهده نمرات و درخواست‌های آموزشی در درگاه آموزشیار.',
+                    guide_content: 'راهنما:\nکلیه امور ثبت انتخاب واحد، تاییدیه مجوز ورود به جلسه آزمون و تسویه حساب مالی دانشجویان دانشگاه آزاد در سراسر کشور.',
+                    official_url: 'https://edu.iau.ac.ir/',
+                    category: '🎓 خدمات دانشجویی و آزمون‌ها', base_fee: 55000,
+                    required_fields: [
+                        { key: 'student_id', label: 'شماره دانشجویی آموزشیار', type: 'text', required: true },
+                        { key: 'national_id', label: 'کد ملی دانشجو', type: 'text', required: true },
+                        { key: 'campus_name', label: 'واحد دانشگاهی و مقطع', type: 'text', required: true }
+                    ],
+                    required_docs: ['تصویر کارت دانشجویی یا برگ انتخاب واحد قبلی']
+                },
+                {
+                    id: 5, category_id: 2, code: 'IVSF_APPOINTMENT', title: 'سامانه نوبت‌دهی تثبیت هویت اتباع',
+                    desc: 'اخذ نوبت اداری الکترونیکی جهت تثبیت هویت، تایید اسناد و امور هویتی اتباع در سامانه رسمی نوبت‌دهی (ivsf.nsia.gov.af).',
+                    guide_content: 'راهنمای دریافت نوبت:\n۱. نوبت‌دهی رسمی با وارد کردن اطلاعات تذکره الکترونیکی یا برگه هویتی\n۲. تعیین نزدیک‌ترین نمایندگی یا مرکز اداری مورد تقاضا\n۳. دریافت برگه رسمی نوبت‌دهی با بارکد معتبر.',
+                    official_url: 'http://ivsf.nsia.gov.af/',
+                    category: '🌐 امور کنسولی و بین‌الملل', base_fee: 120000,
+                    required_fields: [
+                        { key: 'identity_code', label: 'شماره تذکره یا شناسه هویتی متقاضی', type: 'text', required: true },
+                        { key: 'full_name', label: 'نام و نام خانوادگی مطابق مدارک', type: 'text', required: true },
+                        { key: 'phone_number', label: 'شماره تلفن همراه فعال', type: 'tel', required: true },
+                        { key: 'preferred_city', label: 'شهر یا نمایندگی مورد تقاضا', type: 'text', required: true }
+                    ],
+                    required_docs: ['تصویر تذکره یا برگه هویتی', 'تصویر گذرنامه یا برگه اقامت']
+                },
+                {
+                    id: 6, category_id: 2, code: 'ADAB_STUDENT_AFFAIRS', title: 'سامانه امور دانشجویان بین‌الملل (ادب)',
+                    desc: 'ثبت و پیگیری امور روادید تحصیلی، تمدید اقامت، امور کنسولی و پذیرش دانشجویان غیرایرانی در پورتال ادب (saorg.ir).',
+                    guide_content: 'راهنما:\nسامانه ادب متعلق به سازمان امور دانشجویان وزارت علوم بوده و فرآیندهای مربوط به اقامت تحصیلی، تمدید روادید و خروج و مراجعت دانشجویان بین‌الملل را پردازش می‌کند.',
+                    official_url: 'https://adab.saorg.ir/PortalADAB/Home/LandingPage',
+                    category: '🌐 امور کنسولی و بین‌الملل', base_fee: 90000,
+                    required_fields: [
+                        { key: 'passport_number', label: 'شماره گذرنامه معتبر', type: 'text', required: true },
+                        { key: 'tracking_or_fara_code', label: 'کد فراگیر / شناسه پیگیری سامانه ادب', type: 'text', required: true },
+                        { key: 'target_university', label: 'نام دانشگاه محل تحصیل در ایران', type: 'text', required: true }
+                    ],
+                    required_docs: ['تصویر صفحه اول گذرنامه معتبر', 'تصویر نامه پذیرش یا گواهی اشتغال به تحصیل']
+                }
+            ],
+            campaigns: [],
+            channels: [
+                { key: 'PHONE', title: 'تلفن پشتیبانی کافی‌نت لیمو: 09364519860', value: 'tel:09364519860' },
+                { key: 'EITAA', title: 'پشتیبانی ایتا', value: 'https://eitaa.com/Cafinet_limo' },
+                { key: 'TELEGRAM', title: 'کانال تلگرام', value: 'https://t.me/LimoCafeBot' },
+                { key: 'RUBIKA', title: 'پشتیبانی روبیکا', value: 'https://rubika.ir/cafinet_limo' },
+                { key: 'BALE', title: 'پشتیبانی بله', value: 'https://ble.ir/cafinet_limo' }
+            ]
+        };
+
+        function normalizeClientFields(raw) {
+            if (!raw) return [];
+            let parsed = raw;
+            if (typeof raw === 'string') {
+                try { parsed = JSON.parse(raw); } catch(e) { return []; }
+            }
+            if (Array.isArray(parsed)) {
+                return parsed.map((item, idx) => {
+                    if (typeof item === 'string') {
+                        return { key: 'field_' + (idx + 1), label: item, type: 'text', required: true };
+                    }
+                    return {
+                        key: item.key || item.name || ('field_' + (idx + 1)),
+                        label: item.label || item.title || item.name || ('فیلد ' + (idx + 1)),
+                        type: item.type || 'text',
+                        required: item.required !== false
+                    };
+                });
+            }
+            if (typeof parsed === 'object' && parsed !== null) {
+                return Object.entries(parsed).map(([k, v], idx) => {
+                    if (typeof v === 'string') {
+                        return { key: k, label: v, type: 'text', required: true };
+                    }
+                    return {
+                        key: k,
+                        label: (v && v.label) || (v && v.title) || k,
+                        type: (v && v.type) || 'text',
+                        required: v && v.required !== undefined ? !!v.required : true
+                    };
+                });
+            }
+            return [];
+        }
+
         const { createApp, ref, computed, onMounted, nextTick } = Vue;
 
         createApp({
@@ -737,14 +1002,16 @@ html_content = """<!DOCTYPE html>
                 const currentTab = ref('home');
                 const shopIsOpen = ref(true);
                 const userFullName = ref('کاربر لیمو');
+                const networkError = ref(false);
+                const isLoadingData = ref(false);
                 const telegramUserId = ref(null);
                 const walletBalance = ref(0);
                 const motionGraphicsEnabled = ref('1');
 
-                const categories = ref([]);
-                const services = ref([]);
-                const campaigns = ref([]);
-                const channels = ref([]);
+                const categories = ref([...FALLBACK_BOOTSTRAP_DATA.categories]);
+                const services = ref([...FALLBACK_BOOTSTRAP_DATA.services]);
+                const campaigns = ref([...FALLBACK_BOOTSTRAP_DATA.campaigns]);
+                const channels = ref([...FALLBACK_BOOTSTRAP_DATA.channels]);
                 const myOrders = ref([]);
                 const selectedCategory = ref('ALL');
                 const serviceSearchQuery = ref('');
@@ -786,8 +1053,9 @@ html_content = """<!DOCTYPE html>
                     });
                 });
 
-                // دریافت داده‌های بوت‌استرپ در ۱ ریکوئست اتمیک سریع
-                async function loadInitialData() {
+                // دریافت داده‌های بوت‌استرپ با تاب‌آوری شبکه، تایم‌اوت ۵ ثانیه‌ای و حفظ داده‌های آفلاین
+                async function loadInitialData(isManualRetry = false) {
+                    if (isManualRetry) isLoadingData.value = true;
                     // خواندن اطلاعات کاربر تلگرام از وب‌اپ
                     if (window.Telegram?.WebApp) {
                         try {
@@ -802,22 +1070,29 @@ html_content = """<!DOCTYPE html>
                         } catch(e) {}
                     }
 
-                    // فراخوانی اندپوینت بوت‌استرپ واحد
+                    const controller = new AbortController();
+                    const timeoutId = setTimeout(() => controller.abort(), 6000); // ۶ ثانیه مهلت دریافت
+
                     try {
                         const qParams = new URLSearchParams();
                         if (telegramUserId.value) qParams.append('telegram_id', telegramUserId.value);
                         if (userFullName.value) qParams.append('full_name', userFullName.value);
 
-                        const res = await fetch('/api/client/bootstrap?' + qParams.toString());
+                        const res = await fetch('/api/client/bootstrap?' + qParams.toString(), {
+                            signal: controller.signal
+                        });
+                        clearTimeout(timeoutId);
                         const data = await res.json();
                         if (data.ok) {
-                            categories.value = data.categories || [];
-                            services.value = data.services || [];
-                            campaigns.value = data.campaigns || [];
-                            channels.value = data.channels || [];
+                            if (data.categories && data.categories.length > 0) categories.value = data.categories;
+                            if (data.services && data.services.length > 0) services.value = data.services;
+                            if (data.campaigns) campaigns.value = data.campaigns;
+                            if (data.channels && data.channels.length > 0) channels.value = data.channels;
+                            networkError.value = false;
                             
                             if (data.settings) {
                                 if (data.settings.is_open === '0') shopIsOpen.value = false;
+                                else if (data.settings.is_open === '1') shopIsOpen.value = true;
                                 if (data.settings.motion_graphics_enabled !== undefined) {
                                     motionGraphicsEnabled.value = String(data.settings.motion_graphics_enabled);
                                 }
@@ -838,7 +1113,11 @@ html_content = """<!DOCTYPE html>
                             }
                         }
                     } catch(e) {
-                        console.error('Error bootstrapping client:', e);
+                        clearTimeout(timeoutId);
+                        console.warn('Network issue during bootstrap, fallback catalog active:', e.message);
+                        networkError.value = true;
+                    } finally {
+                        isLoadingData.value = false;
                     }
                 }
 
@@ -910,21 +1189,29 @@ html_content = """<!DOCTYPE html>
                     }
                 }
 
+                // مشاهده صفحه توضیحات، شرایط و راهنمای خدمت قبل از ثبت
+                function openServiceDetail(s) {
+                    selectedService.value = s;
+                    currentTab.value = 'service_detail';
+                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                }
+
+                // ورود به فرم سفارش با پشتیبانی دوطرفه از آبجکت و آرایه فیلدها
                 function openServiceForm(s) {
                     selectedService.value = s;
                     orderError.value = '';
                     uploadedFileBase64.value = '';
                     uploadedFileName.value = '';
-                    dynamicFields.value = [];
+                    
+                    const normFields = normalizeClientFields(s.required_fields);
+                    dynamicFields.value = normFields;
                     dynamicFieldValues.value = {};
+                    normFields.forEach(f => {
+                        dynamicFieldValues.value[f.key] = '';
+                    });
 
-                    if (s.required_fields) {
-                        try {
-                            const parsed = Array.isArray(s.required_fields) ? s.required_fields : JSON.parse(s.required_fields);
-                            if (Array.isArray(parsed)) dynamicFields.value = parsed;
-                        } catch(e) {}
-                    }
                     currentTab.value = 'order_form';
+                    window.scrollTo({ top: 0, behavior: 'smooth' });
                 }
 
                 function applyForCampaign(c) {
@@ -1111,6 +1398,9 @@ html_content = """<!DOCTYPE html>
                     applyForCampaign,
                     remindMe,
                     selectCategoryAndBrowse,
+                    openServiceDetail,
+                    networkError,
+                    isLoadingData,
                     handleFileUpload,
                     submitOrder,
                     fetchSupportMessages,

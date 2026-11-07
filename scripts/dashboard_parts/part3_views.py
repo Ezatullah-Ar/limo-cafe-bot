@@ -43,11 +43,11 @@ VIEWS_HTML = r'''
                                 <span class="text-[10px] text-slate-400">افزودن مستقیم به CRM</span>
                             </div>
                         </button>
-                        <button @click="checkAllMonitorsNow" :disabled="isCheckingMonitors" class="p-4 bg-white hover:bg-slate-50/80 rounded-3xl border border-slate-200/80 shadow-card-soft hover:shadow-card-hover text-right transition flex items-center gap-3">
-                            <span class="p-2.5 bg-emerald-100 text-emerald-800 rounded-2xl text-base shadow-sm" :class="{'animate-spin': isCheckingMonitors}">⚡</span>
+                        <button @click="switchTab('services')" class="p-4 bg-white hover:bg-slate-50/80 rounded-3xl border border-slate-200/80 shadow-card-soft hover:shadow-card-hover text-right transition flex items-center gap-3">
+                            <span class="p-2.5 bg-emerald-100 text-emerald-800 rounded-2xl text-base shadow-sm">📋</span>
                             <div>
-                                <b class="text-xs text-slate-900 block">پایش فوری سایت‌ها</b>
-                                <span class="text-[10px] text-slate-400">بررسی پینگ و باز بودن نوبت</span>
+                                <b class="text-xs text-slate-900 block">مدیریت خدمات و فرم‌ها</b>
+                                <span class="text-[10px] text-slate-400">تنظیم کارمزد، اولویت و فیلدها</span>
                             </div>
                         </button>
                         <button @click="switchTab('chats')" class="p-4 bg-white hover:bg-slate-50/80 rounded-3xl border border-slate-200/80 shadow-card-soft hover:shadow-card-hover text-right transition flex items-center gap-3">
@@ -352,7 +352,14 @@ VIEWS_HTML = r'''
                     </div>
 
                     <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                        <div v-for="s in filteredServices" :key="s.id" class="bg-white rounded-3xl p-5 border border-slate-200/80 shadow-card-soft space-y-4 hover:border-slate-300 transition">
+                        <div v-for="(s, index) in filteredServices" :key="s.id"
+                        draggable="true"
+                        @dragstart="onDragStart($event, index, 'services')"
+                        @dragover.prevent="onDragOver($event, index)"
+                        @drop="onDrop($event, index, 'services')"
+                        @dragend="onDragEnd"
+                        :class="{'ring-2 ring-limo-500 ring-offset-2': dragOverIndex === index && draggedType === 'services'}"
+                        class="bg-white rounded-3xl p-5 border border-slate-200/80 shadow-card-soft space-y-4 hover:border-slate-300 transition cursor-grab active:cursor-grabbing select-none">
                             <div class="flex justify-between items-start">
                                 <div>
                                     <span class="text-[10px] font-bold text-limo-900 bg-limo-100 px-2.5 py-0.5 rounded-full inline-block mb-1.5">
@@ -361,7 +368,8 @@ VIEWS_HTML = r'''
                                     <h4 class="font-black text-sm text-slate-900">{{ s.title }}</h4>
                                     <span class="font-mono text-[10px] text-slate-400">{{ s.code }}</span>
                                 </div>
-                                <div class="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-xl px-2 py-1" title="تغییر اولویت و ترتیب نمایش">
+                                <div class="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-xl px-2 py-1" title="تغییر اولویت (کشیدن و رها کردن یا تغییر عدد)">
+                                    <span class="text-slate-400 hover:text-slate-600 font-bold select-none cursor-grab active:cursor-grabbing text-sm" title="برای جابه‌جایی بکشید و رها کنید">⠿</span>
                                     <span class="text-[10px] text-slate-400 font-bold">ترتیب:</span>
                                     <input type="number" v-model.number="s.order_priority" @change="updateItemPriority('services', s.id, s.order_priority)"
                                         class="w-12 text-center text-xs font-black bg-white border border-slate-200 rounded-lg py-0.5 focus:border-limo-500 focus:outline-none font-mono">
@@ -410,7 +418,8 @@ VIEWS_HTML = r'''
                     </div>
 
                     <div class="bg-white rounded-3xl border border-slate-200/80 shadow-card-soft overflow-hidden">
-                        <table class="w-full text-right text-xs">
+                        <div class="overflow-x-auto">
+                            <table class="w-full text-right text-xs">
                             <thead>
                                 <tr class="bg-slate-50 text-slate-500 border-b border-slate-200">
                                     <th class="py-3.5 px-4 font-bold">شناسه / کد</th>
@@ -422,7 +431,14 @@ VIEWS_HTML = r'''
                                 </tr>
                             </thead>
                             <tbody class="divide-y divide-slate-100">
-                                <tr v-for="cat in categories" :key="cat.id" class="hover:bg-slate-50 transition">
+                                <tr v-for="(cat, index) in categories" :key="cat.id"
+                                    draggable="true"
+                                    @dragstart="onDragStart($event, index, 'categories')"
+                                    @dragover.prevent="onDragOver($event, index)"
+                                    @drop="onDrop($event, index, 'categories')"
+                                    @dragend="onDragEnd"
+                                    :class="{'bg-limo-50': dragOverIndex === index && draggedType === 'categories'}"
+                                    class="hover:bg-slate-50 transition cursor-grab active:cursor-grabbing select-none">
                                     <td class="py-3 px-4 font-mono font-bold text-slate-900">{{ cat.code }}</td>
                                     <td class="py-3 px-4 font-bold text-slate-800">{{ cat.title }}</td>
                                     <td class="py-3 px-4 text-slate-500">{{ cat.description || '---' }}</td>
@@ -434,7 +450,8 @@ VIEWS_HTML = r'''
                                     </td>
                                     <td class="py-3 px-4 text-center">
                                         <div class="flex items-center justify-center gap-2">
-                                            <div class="flex items-center justify-center gap-1 bg-slate-50 border border-slate-200 rounded-lg px-1.5 py-0.5" title="تغییر مستقیم اولویت">
+                                            <div class="flex items-center justify-center gap-1 bg-slate-50 border border-slate-200 rounded-lg px-1.5 py-0.5" title="تغییر اولویت (کشیدن و رها کردن یا تغییر عدد)">
+                                                <span class="text-slate-400 hover:text-slate-600 font-bold select-none cursor-grab active:cursor-grabbing text-sm" title="برای جابه‌جایی بکشید و رها کنید">⠿</span>
                                                 <input type="number" v-model.number="cat.order_priority" @change="updateItemPriority('categories', cat.id, cat.order_priority)"
                                                     class="w-11 text-center text-xs font-black bg-white border border-slate-200 rounded py-0.5 focus:border-limo-500 focus:outline-none font-mono">
                                             </div>
@@ -449,6 +466,7 @@ VIEWS_HTML = r'''
                                 </tr>
                             </tbody>
                         </table>
+                        </div>
                     </div>
                 </div>
 
@@ -469,7 +487,8 @@ VIEWS_HTML = r'''
                     </div>
 
                     <div class="bg-white rounded-3xl border border-slate-200/80 shadow-card-soft overflow-hidden">
-                        <table class="w-full text-right text-xs">
+                        <div class="overflow-x-auto">
+                            <table class="w-full text-right text-xs">
                             <thead>
                                 <tr class="bg-slate-50 text-slate-500 border-b border-slate-200">
                                     <th class="py-3.5 px-4 font-bold">مشتری</th>
@@ -506,6 +525,7 @@ VIEWS_HTML = r'''
                                 </tr>
                             </tbody>
                         </table>
+                        </div>
                     </div>
                 </div>
 
@@ -526,7 +546,14 @@ VIEWS_HTML = r'''
                     </div>
 
                     <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                        <div v-for="c in seasonalCampaigns" :key="c.id" class="bg-white rounded-3xl p-5 border border-slate-200/80 shadow-card-soft space-y-4">
+                        <div v-for="(c, index) in seasonalCampaigns" :key="c.id"
+                        draggable="true"
+                        @dragstart="onDragStart($event, index, 'campaigns')"
+                        @dragover.prevent="onDragOver($event, index)"
+                        @drop="onDrop($event, index, 'campaigns')"
+                        @dragend="onDragEnd"
+                        :class="{'ring-2 ring-limo-500 ring-offset-2': dragOverIndex === index && draggedType === 'campaigns'}"
+                        class="bg-white rounded-3xl p-5 border border-slate-200/80 shadow-card-soft space-y-4 hover:border-slate-300 transition cursor-grab active:cursor-grabbing select-none">
                             <div class="flex justify-between items-start">
                                 <div>
                                     <span :class="seasonalBadgeClass(c.status)" class="px-2 py-0.5 rounded-full text-[10px] font-bold inline-block mb-1">
@@ -535,7 +562,8 @@ VIEWS_HTML = r'''
                                     <h4 class="font-black text-sm text-slate-900">{{ c.title }}</h4>
                                     <span class="font-mono text-[10px] text-slate-400">{{ c.code }}</span>
                                 </div>
-                                <div class="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-xl px-2 py-1" title="تغییر اولویت و ترتیب نمایش">
+                                <div class="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-xl px-2 py-1" title="تغییر اولویت (کشیدن و رها کردن یا تغییر عدد)">
+                                    <span class="text-slate-400 hover:text-slate-600 font-bold select-none cursor-grab active:cursor-grabbing text-sm" title="برای جابه‌جایی بکشید و رها کنید">⠿</span>
                                     <span class="text-[10px] text-slate-400 font-bold">ترتیب:</span>
                                     <input type="number" v-model.number="c.order_priority" @change="updateItemPriority('campaigns', c.id, c.order_priority)"
                                         class="w-12 text-center text-xs font-black bg-white border border-slate-200 rounded-lg py-0.5 focus:border-limo-500 focus:outline-none font-mono">
@@ -678,75 +706,6 @@ VIEWS_HTML = r'''
                 </div>
 
                 <!-- ======================================================== -->
-                <!-- ۹. ماژول پایش سامانه‌ها (Website Monitors) -->
-                <!-- ======================================================== -->
-                <div v-if="currentTab === 'monitors'" class="space-y-4">
-                    <div class="flex flex-col sm:flex-row justify-between items-center gap-3 bg-white p-4 rounded-3xl border border-slate-200/80 shadow-card-soft">
-                        <div>
-                            <h3 class="text-sm font-black text-slate-900">پایش هوشمند وضعیت و دسترس‌پذیری سامانه‌ها</h3>
-                            <p class="text-xs text-slate-500">تفکیک وضعیت باز بودن نوبت از پینگ سرور (Uptime vs Registration)</p>
-                        </div>
-                        <div class="flex items-center gap-2">
-                            <button @click="checkAllMonitorsNow" :disabled="isCheckingMonitors"
-                                class="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-black rounded-xl text-xs transition shadow-sm flex items-center gap-1.5">
-                                <span :class="{'animate-spin': isCheckingMonitors}">⚡</span>
-                                <span>بررسی فوری همه سایت‌ها</span>
-                            </button>
-                            <button @click="openNewMonitorModal"
-                                class="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white font-bold rounded-xl text-xs transition shadow-sm">
-                                ➕ افزودن سامانه
-                            </button>
-                        </div>
-                    </div>
-
-                    <!-- کارت‌های سامانه‌های تحت پایش -->
-                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                        <div v-for="m in websiteMonitors" :key="m.id" class="bg-white rounded-3xl p-5 border border-slate-200/80 shadow-card-soft space-y-4">
-                            <div class="flex justify-between items-start">
-                                <div>
-                                    <h4 class="font-black text-sm text-slate-900">{{ m.title }}</h4>
-                                    <a :href="m.url" target="_blank" class="font-mono text-[10px] text-blue-600 hover:underline truncate max-w-[200px] block mt-0.5">
-                                        {{ m.url }} ↗
-                                    </a>
-                                </div>
-                                <span :class="m.uptime_status === 'UP' ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'" class="px-2.5 py-0.5 rounded-full text-[10px] font-bold">
-                                    {{ m.uptime_status === 'UP' ? '🟢 آنلاین' : '🔴 قطع' }}
-                                </span>
-                            </div>
-
-                            <div class="grid grid-cols-2 gap-2 p-3 bg-slate-50 rounded-2xl text-xs">
-                                <div>
-                                    <span class="text-[10px] text-slate-400 block">تاخیر پاسخ (Latency)</span>
-                                    <span class="font-mono font-bold" :class="m.last_response_time_ms < 500 ? 'text-emerald-700' : 'text-amber-700'">
-                                        ⚡ {{ m.last_response_time_ms || 0 }}ms
-                                    </span>
-                                </div>
-                                <div>
-                                    <span class="text-[10px] text-slate-400 block">وضعیت ثبت‌نام</span>
-                                    <b class="text-[11px]" :class="m.service_status === 'OPEN' ? 'text-emerald-700' : 'text-slate-700'">
-                                        {{ m.service_status === 'OPEN' ? '🟢 ثبت‌نام باز' : (m.service_status === 'CLOSED' ? '🔴 بسته' : '🟡 فعال') }}
-                                    </b>
-                                </div>
-                            </div>
-
-                            <div class="pt-2 border-t border-slate-100 flex items-center justify-between text-xs">
-                                <span class="text-[10px] text-slate-400 font-mono">
-                                    آخرین بررسی: {{ m.last_checked_at ? formatDate(m.last_checked_at) : 'انجام نشده' }}
-                                </span>
-                                <div class="flex items-center gap-1.5">
-                                    <button @click="editMonitor(m)" class="px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-bold">
-                                        ویرایش ✏️
-                                    </button>
-                                    <button @click="softDeleteItem('monitor', m.id, m.title)" class="p-1 text-slate-400 hover:text-rose-600 rounded-lg" title="انتقال به سطل زباله">
-                                        🗑️
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- ======================================================== -->
                 <!-- ۱۰. ماژول راه‌های ارتباطی (Communication Channels) -->
                 <!-- ======================================================== -->
                 <div v-if="currentTab === 'channels'" class="space-y-4">
@@ -758,7 +717,8 @@ VIEWS_HTML = r'''
                     </div>
 
                     <div class="bg-white rounded-3xl border border-slate-200/80 shadow-card-soft overflow-hidden">
-                        <table class="w-full text-right text-xs">
+                        <div class="overflow-x-auto">
+                            <table class="w-full text-right text-xs">
                             <thead>
                                 <tr class="bg-slate-50 text-slate-500 border-b border-slate-200">
                                     <th class="py-3.5 px-4 font-bold">عنوان کانال</th>
@@ -769,12 +729,20 @@ VIEWS_HTML = r'''
                                 </tr>
                             </thead>
                             <tbody class="divide-y divide-slate-100">
-                                <tr v-for="ch in communicationChannels" :key="ch.id" class="hover:bg-slate-50 transition">
+                                <tr v-for="(ch, index) in communicationChannels" :key="ch.id"
+                                    draggable="true"
+                                    @dragstart="onDragStart($event, index, 'channels')"
+                                    @dragover.prevent="onDragOver($event, index)"
+                                    @drop="onDrop($event, index, 'channels')"
+                                    @dragend="onDragEnd"
+                                    :class="{'bg-limo-50': dragOverIndex === index && draggedType === 'channels'}"
+                                    class="hover:bg-slate-50 transition cursor-grab active:cursor-grabbing select-none">
                                     <td class="py-3 px-4 font-bold text-slate-900">{{ ch.title }}</td>
                                     <td class="py-3 px-4 font-mono text-slate-400">{{ ch.key }}</td>
                                     <td class="py-3 px-4 font-mono text-slate-700">{{ ch.value || '---' }}</td>
                                     <td class="py-3 px-4">
-                                        <div class="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-xl px-2 py-1" title="تغییر اولویت و ترتیب نمایش">
+                                        <div class="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-xl px-2 py-1" title="تغییر اولویت (کشیدن و رها کردن یا تغییر عدد)">
+                                            <span class="text-slate-400 hover:text-slate-600 font-bold select-none cursor-grab active:cursor-grabbing text-sm" title="برای جابه‌جایی بکشید و رها کنید">⠿</span>
                                             <span class="text-[10px] text-slate-400 font-bold">ترتیب:</span>
                                             <input type="number" v-model.number="ch.order_priority" @change="updateItemPriority('channels', ch.id, ch.order_priority)"
                                                 class="w-12 text-center text-xs font-black bg-white border border-slate-200 rounded-lg py-0.5 focus:border-limo-500 focus:outline-none font-mono">
@@ -798,6 +766,7 @@ VIEWS_HTML = r'''
                                 </tr>
                             </tbody>
                         </table>
+                        </div>
                     </div>
                 </div>
 
@@ -819,7 +788,8 @@ VIEWS_HTML = r'''
                     </div>
 
                     <div class="bg-white rounded-3xl border border-slate-200/80 shadow-card-soft overflow-hidden">
-                        <table class="w-full text-right text-xs">
+                        <div class="overflow-x-auto">
+                            <table class="w-full text-right text-xs">
                             <thead>
                                 <tr class="bg-slate-50 text-slate-500 border-b border-slate-200">
                                     <th class="py-3.5 px-4 font-bold">نوع موجودیت</th>
@@ -865,6 +835,7 @@ VIEWS_HTML = r'''
                                 </tr>
                             </tbody>
                         </table>
+                        </div>
                     </div>
                 </div>
 

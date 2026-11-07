@@ -1,5 +1,66 @@
+
+function getCategoryIcon(code) {
+  const map = {
+    'ALIEN_AND_CODES': '🌐',
+    'UNIVERSITY_SERVICES': '🎓',
+    'TICKETS_TRAVEL': '✈️',
+    'INQUIRIES': '📑',
+    'GOVERNMENT_INTERNET': '🏛',
+    'TAX': '💼',
+    'HOUSING_SERVICES': '🏠'
+  };
+  return map[code] || '📂';
+}
+
+function normalizeFields(raw) {
+  if (!raw) return [];
+  let parsed = raw;
+  if (typeof raw === "string") {
+    try { parsed = JSON.parse(raw); } catch(e) { return []; }
+  }
+  if (Array.isArray(parsed)) {
+    return parsed.map((item, idx) => {
+      if (typeof item === "string") {
+        return { key: "field_" + (idx + 1), label: item, type: "text", required: true };
+      }
+      return {
+        key: item.key || item.name || ("field_" + (idx + 1)),
+        label: item.label || item.title || item.name || ("فیلد " + (idx + 1)),
+        type: item.type || "text",
+        required: item.required !== false
+      };
+    });
+  }
+  if (typeof parsed === "object" && parsed !== null) {
+    return Object.entries(parsed).map(([k, v], idx) => {
+      if (typeof v === "string") {
+        return { key: k, label: v, type: "text", required: true };
+      }
+      return {
+        key: k,
+        label: (v && v.label) || (v && v.title) || k,
+        type: (v && v.type) || "text",
+        required: v && v.required !== undefined ? !!v.required : true
+      };
+    });
+  }
+  return [];
+}
+
+function normalizeDocs(raw) {
+  if (!raw) return [];
+  let parsed = raw;
+  if (typeof raw === "string") {
+    try { parsed = JSON.parse(raw); } catch(e) { return []; }
+  }
+  if (Array.isArray(parsed)) return parsed.filter(d => typeof d === "string" && d.trim().length > 0);
+  if (typeof parsed === "object" && parsed !== null) return Object.values(parsed).filter(d => typeof d === "string" && d.trim().length > 0);
+  return [];
+}
+
 import { ADMIN_DASHBOARD_HTML } from "./admin_html.js";
 import { CLIENT_WEBAPP_HTML } from "./miniapp_html.js";
+import { MOTION_LOGO_MP4_BASE64, MOTION_POSTER_WEBP_BASE64 } from "./motion_assets.js";
 /**
  * Cloudflare Worker - ربات تلگرام «کافی نت لیمو»
  * اجرای بومی روی شبکه لبه‌ای کلودفلر (Edge Cloud) متصل به دیتابیس ابری Cloudflare D1
@@ -106,6 +167,28 @@ export default {
       return new Response(binary, {
         headers: {
           "Content-Type": "image/png",
+          "Cache-Control": "public, max-age=31536000, immutable"
+        }
+      });
+    }
+
+    // موشن‌گرافیک فوق‌بهینه لوگوی کافی‌نت لیمو (MP4 بهینه ۲۰ کیلوبایت)
+    if (reqUrl.pathname === "/motion-logo.mp4") {
+      const binary = Uint8Array.from(atob(MOTION_LOGO_MP4_BASE64), c => c.charCodeAt(0));
+      return new Response(binary, {
+        headers: {
+          "Content-Type": "video/mp4",
+          "Cache-Control": "public, max-age=31536000, immutable"
+        }
+      });
+    }
+
+    // پوستر استاتیک برای لود فوری موشن‌گرافیک (WebP بهینه ۲.۸ کیلوبایت)
+    if (reqUrl.pathname === "/motion-logo-poster.webp") {
+      const binary = Uint8Array.from(atob(MOTION_POSTER_WEBP_BASE64), c => c.charCodeAt(0));
+      return new Response(binary, {
+        headers: {
+          "Content-Type": "image/webp",
           "Cache-Control": "public, max-age=31536000, immutable"
         }
       });
@@ -728,7 +811,6 @@ export default {
       const db = env.DB;
       let stats = { total_orders: 0, pending_orders: 0, approved_orders: 0, need_info_orders: 0, completed_orders: 0, total_users: 0 };
       let orders = [];
-      let monitors = [];
       if (db) {
         try {
           const totOrd = await db.prepare("SELECT COUNT(*) as c FROM orders WHERE deleted_at IS NULL").first();
@@ -754,21 +836,11 @@ export default {
             ORDER BY o.id DESC LIMIT 200
           `).all();
           orders = ordRes.results || [];
-          const monRes = await db.prepare("SELECT * FROM website_monitors WHERE deleted_at IS NULL").all();
-          monitors = (monRes.results || []).map(m => ({
-            id: m.id,
-            code: m.code,
-            title: m.title,
-            target_url: m.url,
-            is_available: m.uptime_status === 'UP' ? 1 : 0,
-            last_status_code: m.last_http_code || 200,
-            last_checked_at: m.last_checked_at
-          }));
         } catch (dbErr) {
           console.error("DB Error in /api/admin/data:", dbErr);
         }
       }
-      return new Response(JSON.stringify({ ok: true, stats, orders, monitors }), {
+      return new Response(JSON.stringify({ ok: true, stats, orders }), {
         headers: { "Content-Type": "application/json" }
       });
     }
@@ -868,40 +940,7 @@ export default {
       return new Response(JSON.stringify({ ok: true }), { headers: { "Content-Type": "application/json" } });
     }
 
-    // ۴. پایش فوری سامانه‌ها از پنل وب
-    if (reqUrl.pathname === "/api/admin/monitors/check" && request.method === "POST") {
-      if (!checkAdminAuth(request, env)) {
-        return new Response(JSON.stringify({ ok: false, error: "Unauthorized" }), {
-          status: 401, headers: { "Content-Type": "application/json" }
-        });
-      }
-      const db = env.DB;
-      if (db) {
-        const monRes = await db.prepare("SELECT * FROM website_monitors").all();
-        const list = monRes.results || [];
-        for (const m of list) {
-          let uptimeStatus = "UP";
-          let statusCode = 200;
-          try {
-            const c = new AbortController();
-            const to = setTimeout(() => c.abort(), 6000);
-            const resp = await fetch(m.url, {
-              headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" },
-              signal: c.signal
-            });
-            clearTimeout(to);
-            statusCode = resp.status;
-            uptimeStatus = (resp.ok || resp.status < 400) ? "UP" : "DOWN";
-          } catch {
-            uptimeStatus = "DOWN";
-            statusCode = 0;
-          }
-          await db.prepare("UPDATE website_monitors SET uptime_status = ?, last_http_code = ?, last_checked_at = CURRENT_TIMESTAMP WHERE id = ?")
-            .bind(uptimeStatus, statusCode, m.id).run();
-        }
-      }
-      return new Response(JSON.stringify({ ok: true }), { headers: { "Content-Type": "application/json" } });
-    }
+
     
     
     // ۵. دریافت لیست تیکت‌های پشتیبانی
@@ -1054,7 +1093,7 @@ export default {
       let campaigns = [];
       if (db) {
         try {
-          const res = await db.prepare("SELECT * FROM seasonal_campaigns WHERE deleted_at IS NULL ORDER BY created_at DESC").all();
+          const res = await db.prepare("SELECT * FROM seasonal_campaigns WHERE deleted_at IS NULL ORDER BY order_priority DESC, created_at DESC").all();
           const now = new Date();
           campaigns = (res.results || []).map(c => {
             let dynamicStatus = c.status;
@@ -1165,7 +1204,7 @@ export default {
         'channels': 'communication_channels',
         'campaigns': 'seasonal_campaigns'
       };
-      const sqlTable = tableMap[table];
+      const sqlTable = tableMap[targetTable];
       if (!db || !sqlTable || !id || !['up', 'down'].includes(direction)) {
         return new Response(JSON.stringify({ ok: false, error: "پارامترهای درخواست نامعتبر است." }), {
           status: 400, headers: { "Content-Type": "application/json" }
@@ -1188,7 +1227,7 @@ export default {
 
           for (let i = 0; i < items.length; i++) {
             await db.prepare(`UPDATE ${sqlTable} SET order_priority = ? WHERE id = ?`)
-              .bind((i + 1) * 10, items[i].id).run();
+              .bind((items.length - i) * 10, items[i].id).run();
           }
         }
         return new Response(JSON.stringify({ ok: true, message: "ترتیب با موفقیت به‌روزرسانی شد." }), {
@@ -1208,7 +1247,7 @@ export default {
       let channels = [];
       if (db) {
         try {
-          const res = await db.prepare("SELECT * FROM communication_channels WHERE is_active = 1 AND deleted_at IS NULL ORDER BY order_priority ASC, id ASC").all();
+          const res = await db.prepare("SELECT * FROM communication_channels WHERE is_active = 1 AND deleted_at IS NULL ORDER BY order_priority DESC, id ASC").all();
           channels = res.results || [];
         } catch(e) {}
       }
@@ -1246,7 +1285,7 @@ export default {
       if (db) {
         try {
           // ۱. دسته‌بندی‌ها
-          const catRes = await db.prepare("SELECT id, code, title, description, order_priority FROM service_categories WHERE is_active = 1 AND deleted_at IS NULL ORDER BY order_priority ASC, id ASC").all();
+          const catRes = await db.prepare("SELECT id, code, title, description, order_priority FROM service_categories WHERE is_active = 1 AND deleted_at IS NULL ORDER BY order_priority DESC, id ASC").all();
           categories = catRes.results || [];
 
           // ۲. کاتالوگ خدمات
@@ -1255,35 +1294,28 @@ export default {
             FROM service_items s
             LEFT JOIN service_categories c ON s.category_id = c.id
             WHERE s.is_active = 1 AND s.deleted_at IS NULL
-            ORDER BY c.order_priority ASC, s.order_priority ASC, s.id ASC
+            ORDER BY c.order_priority DESC, s.order_priority DESC, s.id ASC
           `).all();
           services = (svcRes.results || []).map(s => {
-            let fields = [];
-            let docs = [];
-            try {
-              const parsedF = JSON.parse(s.required_fields || "[]");
-              fields = Array.isArray(parsedF) ? parsedF : [];
-            } catch(e){}
-            try {
-              const parsedD = JSON.parse(s.required_docs || "[]");
-              docs = Array.isArray(parsedD) ? parsedD : [];
-            } catch(e){}
             return {
               id: s.id,
               code: s.code,
               category_id: s.category_id,
               title: s.title,
               desc: s.description || "",
+              guide_content: s.guide_content || s.description || "",
+              image_url: s.image_url || "",
+              official_url: s.official_url || "",
               category: s.category_title || "عمومی",
               base_fee: s.base_fee || 0,
               order_priority: s.order_priority || 0,
-              required_fields: fields,
-              required_docs: docs
+              required_fields: normalizeFields(s.required_fields),
+              required_docs: normalizeDocs(s.required_docs)
             };
           });
 
           // ۳. رویدادهای مقطعی با وضعیت پویا
-          const campRes = await db.prepare("SELECT * FROM seasonal_campaigns WHERE is_active = 1 AND deleted_at IS NULL ORDER BY order_priority ASC, start_at ASC").all();
+          const campRes = await db.prepare("SELECT * FROM seasonal_campaigns WHERE is_active = 1 AND deleted_at IS NULL ORDER BY order_priority DESC, start_at DESC").all();
           const now = new Date();
           campaigns = (campRes.results || []).map(c => {
             let dynamicStatus = c.status;
@@ -1312,7 +1344,7 @@ export default {
           });
 
           // ۴. راه‌های ارتباطی
-          const chRes = await db.prepare("SELECT * FROM communication_channels WHERE is_active = 1 AND deleted_at IS NULL ORDER BY order_priority ASC, id ASC").all();
+          const chRes = await db.prepare("SELECT * FROM communication_channels WHERE is_active = 1 AND deleted_at IS NULL ORDER BY order_priority DESC, id ASC").all();
           channels = chRes.results || [];
 
           // ۵. تنظیمات سیستم
@@ -1997,14 +2029,14 @@ export default {
       let services = [];
       if (db) {
         try {
-          const catRes = await db.prepare("SELECT * FROM service_categories WHERE deleted_at IS NULL ORDER BY order_priority ASC").all();
+          const catRes = await db.prepare("SELECT * FROM service_categories WHERE deleted_at IS NULL ORDER BY order_priority DESC, id ASC").all();
           categories = catRes.results || [];
           const svcRes = await db.prepare(`
             SELECT s.*, c.title as category_title
             FROM service_items s
             LEFT JOIN service_categories c ON s.category_id = c.id
             WHERE s.deleted_at IS NULL
-            ORDER BY c.order_priority, s.order_priority
+            ORDER BY c.order_priority DESC, s.order_priority DESC, s.id ASC
           `).all();
           services = (svcRes.results || []).map(s => {
             let fields = {};
@@ -2052,7 +2084,7 @@ export default {
       }
       const db = env.DB;
       const body = await request.json();
-      const { id, category_id, code, title, description, base_fee, order_priority, required_fields, required_docs, is_active } = body;
+      const { id, category_id, code, title, description, base_fee, order_priority, required_fields, required_docs, is_active, guide_content, image_url, official_url } = body;
 
       if (!code || !title) {
         return new Response(JSON.stringify({ ok: false, error: "کد و عنوان خدمت الزامی هستند." }), {
@@ -2066,6 +2098,14 @@ export default {
       const prioNum = parseInt(order_priority || 0, 10);
       const activeInt = (is_active === false || is_active === 0) ? 0 : 1;
       const catId = category_id ? parseInt(category_id, 10) : 1;
+      const guideText = (guide_content || description || "").trim();
+      const imgUrl = (image_url || "").trim();
+      const offUrl = (official_url || "").trim();
+
+      if (db) {
+        try { await db.prepare("ALTER TABLE service_items ADD COLUMN guide_content TEXT").run(); } catch(e){}
+        try { await db.prepare("ALTER TABLE service_items ADD COLUMN image_url TEXT").run(); } catch(e){}
+      }
 
       if (body.witness_fee !== undefined && db) {
         await db.prepare("INSERT OR REPLACE INTO system_settings (key, value, updated_at) VALUES ('witness_provision_fee', ?, CURRENT_TIMESTAMP)").bind(String(body.witness_fee)).run().catch(() => {});
@@ -2073,21 +2113,41 @@ export default {
 
       try {
         if (id) {
-          await db.prepare(`
-            UPDATE service_items
-            SET category_id = ?, code = ?, title = ?, description = ?, base_fee = ?, order_priority = ?,
-                required_fields = ?, required_docs = ?, is_active = ?, updated_at = CURRENT_TIMESTAMP
-            WHERE id = ?
-          `).bind(catId, code.trim(), title.trim(), description || "", feeNum, prioNum, reqFieldsJson, reqDocsJson, activeInt, id).run();
+          try {
+            await db.prepare(`
+              UPDATE service_items
+              SET category_id = ?, code = ?, title = ?, description = ?, base_fee = ?, order_priority = ?,
+                  required_fields = ?, required_docs = ?, is_active = ?,
+                  guide_content = ?, image_url = ?, official_url = ?, updated_at = CURRENT_TIMESTAMP
+              WHERE id = ?
+            `).bind(catId, code.trim(), title.trim(), description || "", feeNum, prioNum, reqFieldsJson, reqDocsJson, activeInt, guideText, imgUrl, offUrl, id).run();
+          } catch(e) {
+            // Fallback if columns not supported
+            await db.prepare(`
+              UPDATE service_items
+              SET category_id = ?, code = ?, title = ?, description = ?, base_fee = ?, order_priority = ?,
+                  required_fields = ?, required_docs = ?, is_active = ?, updated_at = CURRENT_TIMESTAMP
+              WHERE id = ?
+            `).bind(catId, code.trim(), title.trim(), description || "", feeNum, prioNum, reqFieldsJson, reqDocsJson, activeInt, id).run();
+          }
           return new Response(JSON.stringify({ ok: true, id: id, message: "خدمت با موفقیت ویرایش شد." }), {
             headers: { "Content-Type": "application/json" }
           });
         } else {
-          const ins = await db.prepare(`
-            INSERT INTO service_items (category_id, code, title, description, base_fee, order_priority, required_fields, required_docs, is_active)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-          `).bind(catId, code.trim(), title.trim(), description || "", feeNum, prioNum, reqFieldsJson, reqDocsJson, activeInt).run();
-          const newId = ins?.meta?.last_row_id || 0;
+          let newId = 0;
+          try {
+            const ins = await db.prepare(`
+              INSERT INTO service_items (category_id, code, title, description, base_fee, order_priority, required_fields, required_docs, is_active, guide_content, image_url, official_url)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `).bind(catId, code.trim(), title.trim(), description || "", feeNum, prioNum, reqFieldsJson, reqDocsJson, activeInt, guideText, imgUrl, offUrl).run();
+            newId = ins?.meta?.last_row_id || 0;
+          } catch(e) {
+            const ins = await db.prepare(`
+              INSERT INTO service_items (category_id, code, title, description, base_fee, order_priority, required_fields, required_docs, is_active)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `).bind(catId, code.trim(), title.trim(), description || "", feeNum, prioNum, reqFieldsJson, reqDocsJson, activeInt).run();
+            newId = ins?.meta?.last_row_id || 0;
+          }
           return new Response(JSON.stringify({ ok: true, id: newId, message: "خدمت جدید با موفقیت ایجاد شد." }), {
             headers: { "Content-Type": "application/json" }
           });
@@ -2172,23 +2232,23 @@ export default {
               AND s.deleted_at IS NULL
               AND (c.is_active = 1 OR c.is_active IS NULL)
               AND (c.deleted_at IS NULL OR c.deleted_at IS '')
-            ORDER BY c.order_priority ASC, s.order_priority ASC, s.id ASC
+            ORDER BY c.order_priority DESC, s.order_priority DESC, s.id ASC
           `).all();
           services = (svcRes.results || []).map(s => {
-            let fields = {};
-            let docs = [];
-            try { fields = JSON.parse(s.required_fields || "{}"); } catch(e){}
-            try { docs = JSON.parse(s.required_docs || "[]"); } catch(e){}
             return {
               id: s.id,
               code: s.code,
               category_id: s.category_id,
               title: s.title,
               desc: s.description || "",
+              guide_content: s.guide_content || s.description || "",
+              image_url: s.image_url || "",
+              official_url: s.official_url || "",
               category: s.category_title || "عمومی",
               base_fee: s.base_fee || 0,
-              required_fields: fields,
-              required_docs: docs
+              order_priority: s.order_priority || 0,
+              required_fields: normalizeFields(s.required_fields),
+              required_docs: normalizeDocs(s.required_docs)
             };
           });
         } catch (e) {
@@ -2235,7 +2295,7 @@ export default {
       let campaigns = [];
       if (db) {
         try {
-          const res = await db.prepare("SELECT * FROM seasonal_campaigns WHERE is_active = 1 AND deleted_at IS NULL ORDER BY order_priority ASC, start_at ASC").all();
+          const res = await db.prepare("SELECT * FROM seasonal_campaigns WHERE is_active = 1 AND deleted_at IS NULL ORDER BY order_priority DESC, start_at DESC").all();
           const now = new Date();
           campaigns = (res.results || []).map(c => {
             let dynamicStatus = c.status;
@@ -2470,7 +2530,6 @@ export default {
           await db.prepare("DELETE FROM service_categories WHERE deleted_at IS NOT NULL AND julianday('now') - julianday(deleted_at) > 30").run().catch(() => {});
           await db.prepare("DELETE FROM seasonal_campaigns WHERE deleted_at IS NOT NULL AND julianday('now') - julianday(deleted_at) > 30").run().catch(() => {});
           await db.prepare("DELETE FROM communication_channels WHERE deleted_at IS NOT NULL AND julianday('now') - julianday(deleted_at) > 30").run().catch(() => {});
-          await db.prepare("DELETE FROM website_monitors WHERE deleted_at IS NOT NULL AND julianday('now') - julianday(deleted_at) > 30").run().catch(() => {});
 
           // ۱. سفارشات حذف شده
           const delOrders = await db.prepare("SELECT id, tracking_code as code, status as subtitle, deleted_at FROM orders WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC").all();
@@ -2514,12 +2573,6 @@ export default {
             items.push({ id: r.id, table: 'channel', type_label: 'کانال ارتباطی', title: r.title, code: r.code, subtitle: r.subtitle || '', deleted_at: r.deleted_at, days_left: Math.max(0, 30 - daysPassed) });
           });
 
-          // ۷. مانیتورهای سایت حذف شده
-          const delMonitors = await db.prepare("SELECT id, title, code, url as subtitle, deleted_at FROM website_monitors WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC").all();
-          (delMonitors.results || []).forEach(r => {
-            const daysPassed = Math.floor((Date.now() - new Date(r.deleted_at).getTime()) / (86400000));
-            items.push({ id: r.id, table: 'monitor', type_label: 'پایش سامانه', title: r.title, code: r.code, subtitle: r.subtitle, deleted_at: r.deleted_at, days_left: Math.max(0, 30 - daysPassed) });
-          });
         } catch (e) {
           console.error("Error fetching trash items:", e);
         }
@@ -2545,7 +2598,6 @@ export default {
         category: 'service_categories',
         campaign: 'seasonal_campaigns',
         channel: 'communication_channels',
-        monitor: 'website_monitors'
       };
       const sqlTable = tableMap[table];
       if (!sqlTable || !id) {
@@ -2573,7 +2625,6 @@ export default {
         category: 'service_categories',
         campaign: 'seasonal_campaigns',
         channel: 'communication_channels',
-        monitor: 'website_monitors'
       };
       const sqlTable = tableMap[table];
       if (!sqlTable || !id) {
@@ -2628,17 +2679,13 @@ export default {
       return new Response(JSON.stringify({ ok: true }), { headers: { "Content-Type": "application/json" } });
     }
 
-    if ((reqUrl.pathname === "/api/admin/monitors/delete" || reqUrl.pathname === "/api/admin/monitor/delete") && request.method === "POST") {
-      if (!checkAdminAuth(request, env)) return new Response(JSON.stringify({ ok: false, error: "Unauthorized" }), { status: 401, headers: { "Content-Type": "application/json" } });
-      const { id } = await request.json();
-      if (env.DB && id) await env.DB.prepare("UPDATE website_monitors SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?").bind(id).run();
-      return new Response(JSON.stringify({ ok: true }), { headers: { "Content-Type": "application/json" } });
-    }
-
     // تغییر مستقیم و روان اولویت نمایش (POST /api/admin/priority/update)
     if (reqUrl.pathname === "/api/admin/priority/update" && request.method === "POST") {
       if (!checkAdminAuth(request, env)) return new Response(JSON.stringify({ ok: false, error: "Unauthorized" }), { status: 401, headers: { "Content-Type": "application/json" } });
-      const { table, id, priority } = await request.json();
+      const body = await request.json();
+      const targetTable = body.table || body.type;
+      const targetPrio = body.priority !== undefined ? body.priority : body.order_priority;
+      const { id } = body;
       const tableMap = {
         services: 'service_items',
         service: 'service_items',
@@ -2651,8 +2698,8 @@ export default {
         channel: 'communication_channels'
       };
       const sqlTable = tableMap[table];
-      if (sqlTable && id !== undefined && priority !== undefined && env.DB) {
-        await env.DB.prepare(`UPDATE ${sqlTable} SET order_priority = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`).bind(parseInt(priority, 10) || 0, id).run();
+      if (sqlTable && id !== undefined && targetPrio !== undefined && env.DB) {
+        await env.DB.prepare(`UPDATE ${sqlTable} SET order_priority = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`).bind(parseInt(targetPrio, 10) || 0, id).run();
         return new Response(JSON.stringify({ ok: true }), { headers: { "Content-Type": "application/json" } });
       }
       return new Response(JSON.stringify({ ok: false, error: "پارامترهای اولویت نامعتبر است." }), { status: 400, headers: { "Content-Type": "application/json" } });
@@ -2810,116 +2857,6 @@ ${message}
       return new Response(JSON.stringify({ ok: true, message: "پیام مستقیم با موفقیت به تلگرام مشتری ارسال گردید." }), { headers: { "Content-Type": "application/json" } });
     }
 
-    // ========================================================
-    // پایش پیشرفته سامانه‌ها (Advanced Website Monitors)
-    // ========================================================
-    if (reqUrl.pathname === "/api/admin/monitors/check-all" && request.method === "POST") {
-      if (!checkAdminAuth(request, env)) return new Response(JSON.stringify({ ok: false, error: "Unauthorized" }), { status: 401, headers: { "Content-Type": "application/json" } });
-      const db = env.DB;
-      let checkedCount = 0;
-      if (db) {
-        try {
-          const monRes = await db.prepare("SELECT * FROM website_monitors WHERE deleted_at IS NULL").all();
-          const list = monRes.results || [];
-          for (const m of list) {
-            let uptimeStatus = "UP";
-            let serviceStatus = "ACTIVE";
-            let statusCode = 200;
-            let latencyMs = 0;
-            const t0 = Date.now();
-            try {
-              const c = new AbortController();
-              const to = setTimeout(() => c.abort(), 6000);
-              const resp = await fetch(m.url, {
-                headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) LimoCafeMonitor/2.0" },
-                signal: c.signal
-              });
-              clearTimeout(to);
-              latencyMs = Date.now() - t0;
-              statusCode = resp.status;
-              uptimeStatus = (resp.ok || resp.status < 400) ? "UP" : "DOWN";
-
-              if (uptimeStatus === "UP") {
-                const text = await resp.text().catch(() => "");
-                // بررسی قاعده تشخیص باز بودن ثبت‌نام
-                let rule = {};
-                try { rule = JSON.parse(m.detection_rule || "{}"); } catch(e){}
-                if (rule.keyword && text) {
-                  if (text.includes(rule.keyword)) {
-                    serviceStatus = "OPEN";
-                  } else {
-                    serviceStatus = "CLOSED";
-                  }
-                }
-              } else {
-                serviceStatus = "DOWN";
-              }
-            } catch {
-              uptimeStatus = "DOWN";
-              serviceStatus = "DOWN";
-              statusCode = 0;
-              latencyMs = Date.now() - t0;
-            }
-
-            await db.prepare(`
-              UPDATE website_monitors
-              SET uptime_status = ?, service_status = ?, last_http_code = ?, last_response_time_ms = ?, last_checked_at = CURRENT_TIMESTAMP
-              WHERE id = ?
-            `).bind(uptimeStatus, serviceStatus, statusCode, latencyMs, m.id).run();
-
-            await db.prepare(`
-              INSERT INTO monitor_logs (monitor_id, uptime_status, service_status, http_code, response_time_ms, details)
-              VALUES (?, ?, ?, ?, ?, ?)
-            `).bind(m.id, uptimeStatus, serviceStatus, statusCode, latencyMs, `پایش بلادرنگ - تاخیر ${latencyMs}ms`).run().catch(() => {});
-            checkedCount++;
-          }
-        } catch (e) {
-          console.error("Error in check-all monitors:", e);
-        }
-      }
-      return new Response(JSON.stringify({ ok: true, count: checkedCount }), { headers: { "Content-Type": "application/json" } });
-    }
-
-    if (reqUrl.pathname === "/api/admin/monitors/save" && request.method === "POST") {
-      if (!checkAdminAuth(request, env)) return new Response(JSON.stringify({ ok: false, error: "Unauthorized" }), { status: 401, headers: { "Content-Type": "application/json" } });
-      const db = env.DB;
-      const body = await request.json();
-      const { id, code, title, url, check_interval_minutes, is_active } = body;
-      if (!code || !title || !url) {
-        return new Response(JSON.stringify({ ok: false, error: "کد، عنوان و نشانی اینترنتی الزامی هستند." }), { status: 400, headers: { "Content-Type": "application/json" } });
-      }
-      if (db) {
-        if (id) {
-          await db.prepare(`
-            UPDATE website_monitors
-            SET code = ?, title = ?, url = ?, check_interval_minutes = ?, is_active = ?, updated_at = CURRENT_TIMESTAMP
-            WHERE id = ?
-          `).bind(code.trim(), title.trim(), url.trim(), parseInt(check_interval_minutes || 15, 10), is_active ? 1 : 0, id).run();
-        } else {
-          await db.prepare(`
-            INSERT INTO website_monitors (code, title, url, check_interval_minutes, is_active)
-            VALUES (?, ?, ?, ?, ?)
-          `).bind(code.trim(), title.trim(), url.trim(), parseInt(check_interval_minutes || 15, 10), is_active ? 1 : 0).run();
-        }
-      }
-      return new Response(JSON.stringify({ ok: true }), { headers: { "Content-Type": "application/json" } });
-    }
-
-    if (reqUrl.pathname === "/api/admin/monitors/logs") {
-      if (!checkAdminAuth(request, env)) return new Response(JSON.stringify({ ok: false, error: "Unauthorized" }), { status: 401, headers: { "Content-Type": "application/json" } });
-      const db = env.DB;
-      const monId = reqUrl.searchParams.get("monitor_id");
-      let logs = [];
-      if (db) {
-        let q = "SELECT l.*, m.title as monitor_title FROM monitor_logs l JOIN website_monitors m ON l.monitor_id = m.id";
-        if (monId) q += ` WHERE l.monitor_id = ${parseInt(monId, 10)}`;
-        q += " ORDER BY l.id DESC LIMIT 50";
-        const r = await db.prepare(q).all();
-        logs = r.results || [];
-      }
-      return new Response(JSON.stringify({ ok: true, logs }), { headers: { "Content-Type": "application/json" } });
-    }
-
     // فعال / غیرفعال‌سازی وضعیت کانال ارتباطی
     if ((reqUrl.pathname === "/api/admin/channel/toggle" || reqUrl.pathname === "/api/admin/channel/status") && request.method === "POST") {
       if (!checkAdminAuth(request, env)) return new Response(JSON.stringify({ ok: false, error: "Unauthorized" }), { status: 401, headers: { "Content-Type": "application/json" } });
@@ -2939,7 +2876,7 @@ ${message}
       const db = env.DB;
       const tables = [
         'users', 'orders', 'service_categories', 'service_items',
-        'seasonal_campaigns', 'communication_channels', 'website_monitors',
+        'seasonal_campaigns', 'communication_channels',
         'wallets', 'wallet_transactions', 'support_threads', 'support_messages',
         'system_settings', 'order_audit_logs'
       ];
@@ -3447,7 +3384,6 @@ ${message}
             inline_keyboard: [
               [{ text: "📊 آمار و وضعیت سیستم", callback_data: "admin_stats" }],
               [{ text: "📂 کارتابل درخواست‌ها", callback_data: "admin_orders" }],
-              [{ text: "🌐 وضعیت پایش سایت‌ها", callback_data: "admin_monitors" }]
             ]
           }
         });
@@ -3524,19 +3460,17 @@ ${message}
           });
         }
         if (db) {
-          const [u, o, p, m, r] = await Promise.all([
+          const [u, o, p, r] = await Promise.all([
             db.prepare("SELECT COUNT(*) as c FROM users").first(),
             db.prepare("SELECT COUNT(*) as c FROM orders").first(),
             db.prepare("SELECT COUNT(*) as c FROM orders WHERE status = 'PENDING'").first(),
-            db.prepare("SELECT COUNT(*) as c FROM website_monitors").first(),
             db.prepare("SELECT COUNT(*) as c FROM reminders WHERE is_sent = 0").first()
           ]);
           const statsText = `📊 <b>آمار و وضعیت عمومی سامانه کافی نت لیمو</b>\n\n` +
             `👥 <b>تعداد کل کاربران:</b> ${u ? u.c : 0}\n` +
             `📦 <b>کل سفارشات:</b> ${o ? o.c : 0}\n` +
             `⏳ <b>سفارشات در انتظار بررسی:</b> ${p ? p.c : 0}\n` +
-            `⏰ <b>یادآورهای در نوبت:</b> ${r ? r.c : 0}\n` +
-            `🌐 <b>سایت‌های تحت پایش:</b> ${m ? m.c : 0}`;
+            `⏰ <b>یادآورهای در نوبت:</b> ${r ? r.c : 0}`;
           return webhookReply({
             method: "sendMessage",
             chat_id: chatId,
@@ -3545,8 +3479,7 @@ ${message}
             reply_markup: {
               inline_keyboard: [
                 [{ text: "📂 کارتابل درخواست‌ها", callback_data: "admin_orders" }],
-                [{ text: "🌐 وضعیت پایش سایت‌ها", callback_data: "admin_monitors" }],
-                [{ text: "🔙 بازگشت به پنل مدیریت", callback_data: "back_to_admin" }]
+                  [{ text: "🔙 بازگشت به پنل مدیریت", callback_data: "back_to_admin" }]
               ]
             }
           });
@@ -3573,18 +3506,16 @@ ${message}
           } catch {
             dbIntegrity = "CONNECTED";
           }
-          const [u, o, m] = await Promise.all([
+          const [u, o] = await Promise.all([
             db.prepare("SELECT COUNT(*) as c FROM users").first(),
-            db.prepare("SELECT COUNT(*) as c FROM orders").first(),
-            db.prepare("SELECT COUNT(*) as c FROM website_monitors").first()
+            db.prepare("SELECT COUNT(*) as c FROM orders").first()
           ]);
           const healthText = `🟢 <b>گزارش سلامت و عیب‌یابی لبه ابری (Cloudflare Edge)</b>\n\n` +
             `📌 <b>وضعیت سامانه:</b> HEALTHY\n` +
             `💾 <b>پایگاه داده Cloudflare D1:</b> <code>${dbIntegrity}</code>\n\n` +
             `🔢 <b>شمارنده‌ها:</b>\n` +
             `• کاربران: ${u ? u.c : 0}\n` +
-            `• سفارشات: ${o ? o.c : 0}\n` +
-            `• سایت‌های تحت پایش: ${m ? m.c : 0}`;
+            `• سفارشات: ${o ? o.c : 0}`;
           return webhookReply({
             method: "sendMessage",
             chat_id: chatId,
@@ -3608,11 +3539,10 @@ ${message}
           });
         }
         if (db) {
-          const [u, o, r, m] = await Promise.all([
+          const [u, o, r] = await Promise.all([
             db.prepare("SELECT COUNT(*) as c FROM users").first(),
             db.prepare("SELECT COUNT(*) as c FROM orders").first(),
-            db.prepare("SELECT COUNT(*) as c FROM reminders").first(),
-            db.prepare("SELECT COUNT(*) as c FROM website_monitors").first()
+            db.prepare("SELECT COUNT(*) as c FROM reminders").first()
           ]);
           const backupText = `💾 <b>گزارش اسنپ‌شات پایگاه داده Cloudflare D1</b>\n\n` +
             `🏷 <b>نسخه:</b> 1.0.0 (D1 Edge Replication)\n\n` +
@@ -3897,15 +3827,19 @@ ${message}
         });
       }
 
-      // ۱. فهرست خدمات
+      // ۱. فهرست خدمات (منبع واحد اطلاعات همگام با دیتابیس D1 و مینی‌اپ)
       if (data === "services_list") {
         let buttons = [];
+        const webappUrl = env.WEBAPP_URL || `https://${reqUrl.hostname}/webapp`;
         if (db) {
           try {
-            const catRes = await db.prepare("SELECT * FROM service_categories WHERE is_active = 1 AND deleted_at IS NULL ORDER BY order_priority ASC, id ASC").all();
+            const catRes = await db.prepare("SELECT * FROM service_categories WHERE is_active = 1 AND deleted_at IS NULL ORDER BY order_priority DESC, id ASC").all();
             const cats = catRes.results || [];
             for (const c of cats) {
-              buttons.push([{ text: c.title, callback_data: `cat_${c.code || c.id}` }]);
+              const catTitle = (c.title || "").trim();
+              const hasEmoji = /[\u{1F300}-\u{1F9FF}\u{2600}-\u{26FF}]/u.test(catTitle.slice(0, 4));
+              const displayTitle = hasEmoji ? catTitle : `${getCategoryIcon(c.code)} ${catTitle}`;
+              buttons.push([{ text: displayTitle, callback_data: `cat_${c.code || c.id}` }]);
             }
           } catch(e) {
             console.error("Error fetching categories for services_list:", e);
@@ -3916,11 +3850,11 @@ ${message}
             [{ text: "🌐 امور اتباع و کدها", callback_data: "cat_ALIEN_AND_CODES" }],
             [{ text: "🎓 خدمات دانشگاهی و آزمون‌ها", callback_data: "cat_UNIVERSITY_SERVICES" }],
             [{ text: "✈️ بلیت هواپیما، قطار و اتوبوس", callback_data: "cat_TICKETS_TRAVEL" }],
-            [{ text: "🏛 سایر خدمات اینترنتی و اداری", callback_data: "cat_GOVERNMENT_INTERNET" }],
-            [{ text: "📂 درخواست‌های من، کیف پول و پیگیری", callback_data: "cat_PORTAL_AND_WALLET" }],
-            [{ text: "💬 گفت‌وگو با پشتیبانی و ارتباط با ما", callback_data: "cat_SUPPORT_AND_CONTACT" }]
+            [{ text: "🏛 سایر خدمات اینترنتی و اداری", callback_data: "cat_GOVERNMENT_INTERNET" }]
           ];
         }
+        buttons.unshift([{ text: "📱 ورود به کاتالوگ در مینی‌اپلیکیشن", web_app: { url: `${webappUrl}?tab=services` } }]);
+        buttons.push([{ text: "⏰ ثبت‌نام‌های مقطعی و مهلت‌دار", callback_data: "seasonal_list" }]);
         buttons.push([{ text: "🔙 بازگشت به منوی اصلی", callback_data: "back_to_main" }]);
 
         return callbackReply("📋 <b>دسته‌بندی خدمات سامانه کافی نت لیمو:</b>\n\nلطفاً یکی از دسته‌های زیر را جهت مشاهده خدمات انتخاب فرمایید:", {
@@ -3955,12 +3889,13 @@ ${message}
 
         let catButtons = [];
         let categoryTitle = "این دسته‌بندی";
+        const webappUrl = env.WEBAPP_URL || `https://${reqUrl.hostname}/webapp`;
         if (db) {
           try {
             const catInfo = await db.prepare("SELECT * FROM service_categories WHERE (code = ? OR id = ?) AND is_active = 1 AND deleted_at IS NULL").bind(catCode, catCode).first();
             if (catInfo) categoryTitle = catInfo.title;
 
-            const svcs = await db.prepare("SELECT s.*, c.title as cat_title FROM service_items s JOIN service_categories c ON s.category_id = c.id WHERE (c.code = ? OR c.id = ?) AND s.is_active = 1 AND s.deleted_at IS NULL AND c.is_active = 1 AND c.deleted_at IS NULL ORDER BY s.order_priority ASC, s.id ASC").bind(catCode, catCode).all();
+            const svcs = await db.prepare("SELECT s.*, c.title as cat_title, c.code as category_code FROM service_items s JOIN service_categories c ON s.category_id = c.id WHERE (c.code = ? OR c.id = ?) AND s.is_active = 1 AND s.deleted_at IS NULL AND c.is_active = 1 AND c.deleted_at IS NULL ORDER BY s.order_priority DESC, s.id ASC").bind(catCode, catCode).all();
             if (svcs.results && svcs.results.length > 0) {
               for (const s of svcs.results) {
                 catButtons.push([{ text: `🔹 ${s.title}`, callback_data: `svc_${s.code}` }]);
@@ -3970,11 +3905,8 @@ ${message}
             console.error("Error fetching services for category:", e);
           }
         }
-
-        if (catCode === "ALIEN_AND_CODES") {
-          if (!catButtons.some(b => b[0] && b[0].callback_data === "svc_HOUSING_TRACKING_CODE")) {
-            catButtons.unshift([{ text: "🏠 کد رهگیری قرارداد مسکن (سامانه خودنویس)", callback_data: "svc_HOUSING_TRACKING_CODE" }]);
-          }
+        if (catButtons.length > 0) {
+          catButtons.unshift([{ text: `📱 باز کردن «${categoryTitle}» در مینی‌اپ`, web_app: { url: `${webappUrl}?cat=${encodeURIComponent(catCode)}` } }]);
         }
 
         if (catButtons.length === 0) {
@@ -4001,7 +3933,7 @@ ${message}
         let chList = [];
         if (db) {
           try {
-            const chRes = await db.prepare("SELECT * FROM communication_channels WHERE is_active = 1 AND deleted_at IS NULL ORDER BY order_priority ASC, id ASC").all();
+            const chRes = await db.prepare("SELECT * FROM communication_channels WHERE is_active = 1 AND deleted_at IS NULL ORDER BY order_priority DESC, id ASC").all();
             chList = chRes.results || [];
           } catch(e) {
             console.error("Error fetching channels in bot:", e);
@@ -4087,13 +4019,13 @@ ${message}
         });
       }
 
-      // ۶. جزییات یک خدمت
+      // ۶. جزییات یک خدمت (همگام با منبع واحد D1، راهنمای خدمت و لینک رسمی)
       if (data.startsWith("svc_")) {
         const code = data.replace("svc_", "");
         if (db) {
           try {
             const svc = await db.prepare(`
-              SELECT s.*, c.title as cat_title 
+              SELECT s.*, c.title as cat_title, c.code as category_code 
               FROM service_items s 
               LEFT JOIN service_categories c ON s.category_id = c.id 
               WHERE s.code = ?
@@ -4108,26 +4040,38 @@ ${message}
               const desc = (svc.description || "ارائه خدمات تخصصی و ثبت الکترونیکی در سامانه‌های رسمی کشور.").trim();
               const categoryTitle = svc.cat_title || "عمومی";
 
-              const text = `📋 <b>${escapeHtml(svc.title)}</b>
+              let text = `📋 <b>${escapeHtml(svc.title)}</b>\n\n` +
+                `📁 <b>دسته‌بندی:</b> ${escapeHtml(categoryTitle)}\n` +
+                `💵 <b>تعرفه خدمت:</b> ${feeText}\n\n` +
+                `📝 <b>توضیحات و شرایط:</b>\n${escapeHtml(desc)}\n`;
 
-` +
-                `📁 <b>دسته‌بندی:</b> ${escapeHtml(categoryTitle)}
-` +
-                `💵 <b>تعرفه خدمت:</b> ${feeText}
+              if (svc.guide_content && svc.guide_content.trim() && svc.guide_content.trim() !== desc) {
+                text += `\n📖 <b>راهنمای مشتری و نکات ثبت:</b>\n${escapeHtml(svc.guide_content.trim())}\n`;
+              }
 
-` +
-                `📝 <b>توضیحات و شرایط:</b>
-${escapeHtml(desc)}
+              if (svc.code === "HOUSING_TRACKING_CODE") {
+                let witnessFee = "۳۵۰،۰۰۰";
+                try {
+                  const setObj = await db.prepare("SELECT value FROM system_settings WHERE key = 'witness_provision_fee'").first();
+                  if (setObj && setObj.value) witnessFee = Math.round(parseInt(setObj.value, 10) / 10).toLocaleString('fa-IR');
+                } catch(e) {}
+                text += `\n👥 <b>هزینه تأمین دو شاهد رسمی (اختیاری):</b> ${witnessFee} تومان\n`;
+              }
 
-` +
-                `جهت ثبت الکترونیکی پرونده روی دکمه ورود به مینی‌اپلیکیشن یا ارتباط با اپراتور کلیک فرمایید:`;
+              text += `\nجهت مشاهده راهنمای تصویری و ثبت هوشمند پرونده روی دکمه زیر کلیک فرمایید:`;
+
+              const inlineRows = [
+                [{ text: "📱 ثبت درخواست در مینی‌اپلیکیشن", web_app: { url: `${webappUrl}?svc=${encodeURIComponent(code)}` } }]
+              ];
+              if (svc.official_url && (svc.official_url.startsWith("http://") || svc.official_url.startsWith("https://"))) {
+                inlineRows.push([{ text: "🔗 سامانه رسمی", url: svc.official_url }]);
+              }
+              inlineRows.push([{ text: "💬 هماهنگی با اپراتور جهت ثبت", callback_data: "contact_operator" }]);
+              inlineRows.push([{ text: "🔙 بازگشت به دسته‌بندی", callback_data: `cat_${svc.category_code || svc.category_id || "services_list"}` }]);
+              inlineRows.push([{ text: "🏠 منوی اصلی", callback_data: "back_to_main" }]);
 
               return callbackReply(text, {
-                inline_keyboard: [
-                  [{ text: "📱 ثبت درخواست در مینی‌اپلیکیشن", web_app: { url: `${webappUrl}?svc=${encodeURIComponent(code)}` } }],
-                  [{ text: "💬 هماهنگی با اپراتور جهت ثبت", callback_data: "contact_operator" }],
-                  [{ text: "🔙 بازگشت به فهرست خدمات", callback_data: "services_list" }]
-                ]
+                inline_keyboard: inlineRows
               });
             }
           } catch(e) {
@@ -4360,7 +4304,7 @@ ${escapeHtml(desc)}
       // ۱۳. ثبت‌نام‌های مقطعی و دوره‌ای
       if (data === "seasonal_list") {
         if (db) {
-          const res = await db.prepare("SELECT * FROM seasonal_campaigns WHERE is_active = 1 AND deleted_at IS NULL ORDER BY order_priority ASC, start_at ASC").all();
+          const res = await db.prepare("SELECT * FROM seasonal_campaigns WHERE is_active = 1 AND deleted_at IS NULL ORDER BY order_priority DESC, start_at DESC").all();
           const camps = res.results || [];
           if (camps.length === 0) {
             return callbackReply("⏰ <b>ثبت‌نام‌های مقطعی و زمان‌دار</b>\n\nدر حال حاضر هیچ ثبت‌نام دوره‌ای یا مهلت‌داری فعال نیست.", {
@@ -4485,104 +4429,20 @@ ${escapeHtml(desc)}
           return callbackReply(ACCESS_DENIED_TEXT, { inline_keyboard: [[{ text: "🔙 بازگشت", callback_data: "back_to_main" }]] });
         }
         if (db) {
-          const [u, o, p, m, r] = await Promise.all([
+          const [u, o, p, r] = await Promise.all([
             db.prepare("SELECT COUNT(*) as c FROM users").first(),
             db.prepare("SELECT COUNT(*) as c FROM orders").first(),
             db.prepare("SELECT COUNT(*) as c FROM orders WHERE status = 'PENDING'").first(),
-            db.prepare("SELECT COUNT(*) as c FROM website_monitors").first(),
             db.prepare("SELECT COUNT(*) as c FROM reminders WHERE is_sent = 0").first()
           ]);
           const statsText = `📊 <b>داشبورد آماری سامانه کافی نت لیمو:</b>\n\n` +
             `👥 <b>کاربران:</b> ${u ? u.c : 0} نفر\n` +
             `📑 <b>کل سفارشات:</b> ${o ? o.c : 0}\n` +
             `⏳ <b>سفارشات در انتظار:</b> ${p ? p.c : 0}\n` +
-            `⏰ <b>یادآورهای منتظر ارسال:</b> ${r ? r.c : 0}\n` +
-            `🌐 <b>سامانه‌های هدف تحت پایش:</b> ${m ? m.c : 0}\n\n` +
+            `⏰ <b>یادآورهای منتظر ارسال:</b> ${r ? r.c : 0}\n\n` +
             `<i>منطقه زمانی: Asia/Tehran | پایگاه داده: Cloudflare D1</i>`;
           return callbackReply(statsText, {
             inline_keyboard: [[{ text: "🔙 بازگشت به پنل مدیریت", callback_data: "back_to_admin" }]]
-          });
-        }
-      }
-
-      if (data === "admin_monitors") {
-        if (userId !== adminId) {
-          return callbackReply(ACCESS_DENIED_TEXT, { inline_keyboard: [[{ text: "🔙 بازگشت", callback_data: "back_to_main" }]] });
-        }
-        if (db) {
-          const res = await db.prepare("SELECT * FROM website_monitors ORDER BY id ASC").all();
-          const list = res.results || [];
-          let monText = `🌐 <b>وضعیت پایش هوشمند سایت‌های هدف (${list.length} سامانه):</b>\n\n`;
-          for (const item of list) {
-            const upIcon = item.uptime_status === "UP" ? "🟢" : (item.uptime_status === "DOWN" ? "🔴" : "⚪");
-            const srvIcon = item.service_status === "OPEN" ? "✅ باز" : (item.service_status === "CLOSED" ? "⛔️ بسته" : "❓ نامشخص");
-            const lastCheck = (item.last_checked_at || "").replace("T", " ").slice(0, 16) || "هنوز پایش نشده";
-            monText += `${upIcon} <b>${item.title}</b>\n   ▫️ سرور: ${item.uptime_status} (HTTP ${item.last_http_code || "—"})\n   ▫️ ثبت‌نام: ${srvIcon}\n   ▫️ آخرین پایش: <code>${lastCheck}</code>\n\n`;
-          }
-          return callbackReply(monText, {
-            inline_keyboard: [
-              [{ text: "🔄 پایش فوری اکنون", callback_data: "admin_check_monitors_now" }],
-              [{ text: "🔙 بازگشت به پنل مدیریت", callback_data: "back_to_admin" }]
-            ]
-          });
-        }
-      }
-
-      if (data === "admin_check_monitors_now") {
-        if (userId !== adminId) {
-          return callbackReply(ACCESS_DENIED_TEXT, { inline_keyboard: [[{ text: "🔙 بازگشت", callback_data: "back_to_main" }]] });
-        }
-        if (db) {
-          const res = await db.prepare("SELECT * FROM website_monitors WHERE is_active = 1").all();
-          const list = res.results || [];
-          let report = `🚀 <b>نتایج پایش فوری سامانه‌ها:</b>\n\n`;
-          for (const m of list) {
-            const start = Date.now();
-            let httpCode = 0;
-            let upStatus = "UNKNOWN";
-            let srvStatus = "UNKNOWN";
-            let details = "";
-            try {
-              const c = new AbortController();
-              const to = setTimeout(() => c.abort(), 7000);
-              const resp = await fetch(m.url, {
-                headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" },
-                signal: c.signal
-              });
-              clearTimeout(to);
-              httpCode = resp.status;
-              const respTime = Date.now() - start;
-              if (resp.ok || (resp.status >= 200 && resp.status < 400)) {
-                upStatus = "UP";
-                const pageText = await resp.text();
-                let rule = {};
-                try { rule = JSON.parse(m.detection_rule || "{}"); } catch(e){}
-                const openKw = rule.open_keywords || [];
-                const closedKw = rule.closed_keywords || [];
-                let isOpened = openKw.some(kw => pageText.includes(kw));
-                let isClosed = closedKw.some(kw => pageText.includes(kw));
-                srvStatus = (isOpened && !isClosed) ? "OPEN" : (isClosed ? "CLOSED" : "UNKNOWN");
-                details = `زمان پاسخ: ${respTime}ms`;
-              } else {
-                upStatus = "DOWN";
-                srvStatus = "CLOSED";
-                details = `خطای HTTP ${resp.status}`;
-              }
-            } catch(e) {
-              upStatus = "DOWN";
-              srvStatus = "CLOSED";
-              details = e.name === "AbortError" ? "خطای مهلت زمانی (Timeout)" : "خطای شبکه / عدم دسترسی";
-            }
-            await db.prepare(`
-              UPDATE website_monitors
-              SET uptime_status = ?, service_status = ?, last_http_code = ?, last_checked_at = CURRENT_TIMESTAMP
-              WHERE id = ?
-            `).bind(upStatus, srvStatus, httpCode, m.id).run();
-            const icon = upStatus === "UP" ? "🟢" : "🔴";
-            report += `${icon} <b>${m.title}</b>: ${upStatus} | ثبت‌نام: ${srvStatus}\n   ▫️ ${details}\n\n`;
-          }
-          return callbackReply(report, {
-            inline_keyboard: [[{ text: "🔙 بازگشت به پایش", callback_data: "admin_monitors" }]]
           });
         }
       }
@@ -4716,8 +4576,19 @@ ${escapeHtml(desc)}
           inline_keyboard: [
             [{ text: "📊 آمار و وضعیت سیستم", callback_data: "admin_stats" }],
             [{ text: "📂 کارتابل درخواست‌ها", callback_data: "admin_orders" }],
-            [{ text: "🌐 وضعیت پایش سایت‌ها", callback_data: "admin_monitors" }],
             [{ text: "🏠 منوی اصلی", callback_data: "back_to_main" }]
+          ]
+        });
+      }
+
+      // ارسال موشن‌گرافیک فوق‌بهینه لوگو در ربات تلگرام
+      if (data === "view_motion_graphic") {
+        const motionUrl = `https://${reqUrl.hostname}/motion-logo.mp4`;
+        const webappUrl = env.WEBAPP_URL || `https://${reqUrl.hostname}/webapp`;
+        return callbackReply("🎬 <b>موشن‌گرافیک رسمی کافی‌نت آنلاین لیمو:</b>\n\nارائه‌دهنده خدمات تخصصی دانشجویی، آزمون‌های سراسری، نوبت‌دهی و استعلامات کشوری.", {
+          inline_keyboard: [
+            [{ text: "📱 ورود به مینی‌اپلیکیشن لیمو", web_app: { url: webappUrl } }],
+            [{ text: "🔙 بازگشت به منوی اصلی", callback_data: "back_to_main" }]
           ]
         });
       }
