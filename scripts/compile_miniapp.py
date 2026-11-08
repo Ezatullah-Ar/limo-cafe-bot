@@ -11,8 +11,38 @@ html_content = """<!DOCTYPE html>
     <!-- Telegram WebApp SDK -->
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     
-    <!-- Vue 3 Production Build -->
-    <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+    <!-- Vue 3 Production Build - Served Locally at Edge with Multi-CDN Resilience -->
+    <script src="/vue.global.prod.js"></script>
+    <script>
+        if (typeof Vue === 'undefined') {
+            document.write('<script src="https://cdn.jsdelivr.net/npm/vue@3/dist/vue.global.prod.js"><\\/script>');
+        }
+    </script>
+    <script>
+        if (typeof Vue === 'undefined') {
+            document.write('<script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"><\/script>');
+        }
+    </script>
+    <script>
+        if (typeof Vue === 'undefined') {
+            document.write('<script src="https://cdnjs.cloudflare.com/ajax/libs/vue/3.4.21/vue.global.prod.min.js"><\/script>');
+        }
+    </script>
+    <script>
+        // جلوگیری قطعی از سفید ماندن صفحه هنگام اختلال شبکه
+        setTimeout(function() {
+            var el = document.getElementById('app');
+            if (el && el.hasAttribute('v-cloak') && typeof Vue === 'undefined') {
+                el.removeAttribute('v-cloak');
+                el.innerHTML = '<div style="padding:2.5rem 1.5rem;text-align:center;font-family:sans-serif;direction:rtl;">' +
+                    '<div style="font-size:3rem;margin-bottom:1rem;">📶</div>' +
+                    '<h2 style="font-size:1.15rem;font-weight:900;color:#0f172a;">در حال اتصال به سرور لیمو...</h2>' +
+                    '<p style="margin-top:0.6rem;font-size:0.85rem;color:#64748b;line-height:1.6;">در صورت کندی پروکسی یا فیلترشکن، اتصال اندکی زمان‌بر است. لطفاً چند لحظه شکیبا باشید یا صفحه را تازه‌سازی فرمایید.</p>' +
+                    '<button onclick="location.reload()" style="margin-top:1.2rem;padding:0.6rem 1.8rem;background:linear-gradient(to right,#84cc16,#65a30d);color:#0f172a;border:none;border-radius:1rem;font-weight:900;cursor:pointer;box-shadow:0 4px 12px rgba(132,204,22,0.3);">تلاش مجدد 🔄</button>' +
+                    '</div>';
+            }
+        }, 5000);
+    </script>
     
     <!-- Preconnect & Persian Font Stack -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -133,6 +163,65 @@ html_content = """<!DOCTYPE html>
 
         .no-scrollbar::-webkit-scrollbar { display: none; }
         .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+        /* استایل‌های پایه ضد انسداد شبکه جهت تضمین نمایش حتی در صورت لود نشدن CDN خارجی */
+        .flex { display: flex; }
+        .flex-col { flex-direction: column; }
+        .items-center { align-items: center; }
+        .justify-between { justify-content: space-between; }
+        .justify-center { justify-content: center; }
+        .gap-1 { gap: 0.25rem; }
+        .gap-1\.5 { gap: 0.375rem; }
+        .gap-2 { gap: 0.5rem; }
+        .gap-2\.5 { gap: 0.625rem; }
+        .gap-3 { gap: 0.75rem; }
+        .gap-4 { gap: 1rem; }
+        .grid { display: grid; }
+        .grid-cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .grid-cols-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+        .w-full { width: 100%; }
+        .max-w-md { max-width: 28rem; }
+        .mx-auto { margin-left: auto; margin-right: auto; }
+        .min-h-screen { min-height: 100vh; }
+        .relative { position: relative; }
+        .sticky { position: sticky; }
+        .top-0 { top: 0; }
+        .z-30 { z-index: 30; }
+        .rounded-xl { border-radius: 0.75rem; }
+        .rounded-2xl { border-radius: 1rem; }
+        .rounded-3xl { border-radius: 1.5rem; }
+        .rounded-full { border-radius: 9999px; }
+        .bg-white { background-color: #ffffff; }
+        .bg-slate-50 { background-color: #f8fafc; }
+        .bg-slate-100 { background-color: #f1f5f9; }
+        .bg-slate-900 { background-color: #0f172a; }
+        .text-white { color: #ffffff; }
+        .text-slate-900 { color: #0f172a; }
+        .text-slate-700 { color: #334155; }
+        .text-slate-600 { color: #475569; }
+        .text-slate-500 { color: #64748b; }
+        .text-slate-400 { color: #94a3b8; }
+        .border { border-width: 1px; border-style: solid; }
+        .border-slate-100 { border-color: #f1f5f9; }
+        .border-slate-200 { border-color: #e2e8f0; }
+        .p-2 { padding: 0.5rem; }
+        .p-3 { padding: 0.75rem; }
+        .p-3\.5 { padding: 0.875rem; }
+        .p-4 { padding: 1rem; }
+        .p-5 { padding: 1.25rem; }
+        .py-2 { padding-top: 0.5rem; padding-bottom: 0.5rem; }
+        .py-2\.5 { padding-top: 0.625rem; padding-bottom: 0.625rem; }
+        .py-3 { padding-top: 0.75rem; padding-bottom: 0.75rem; }
+        .px-3 { padding-left: 0.75rem; padding-right: 0.75rem; }
+        .px-4 { padding-left: 1rem; padding-right: 1rem; }
+        .text-xs { font-size: 0.75rem; line-height: 1rem; }
+        .text-sm { font-size: 0.875rem; line-height: 1.25rem; }
+        .font-bold { font-weight: 700; }
+        .font-black { font-weight: 900; }
+        .cursor-pointer { cursor: pointer; }
+        .transition { transition-property: all; transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1); transition-duration: 150ms; }
+        .shadow-soft { box-shadow: 0 4px 20px -2px rgba(15, 23, 42, 0.05); }
+
     </style>
 </head>
 <body class="antialiased select-none">
@@ -363,27 +452,30 @@ html_content = """<!DOCTYPE html>
                 <div class="space-y-2.5">
                     <div v-for="s in filteredServicesList" :key="s.id"
                         class="bg-white rounded-3xl p-4 border border-slate-100 shadow-soft hover:shadow-hover transition space-y-2.5">
-                        <div class="flex justify-between items-start">
+                        <div class="flex justify-between items-start cursor-pointer" @click="openServiceDetail(s)">
                             <div>
                                 <span class="text-[9px] font-bold text-limo-800 bg-limo-100 px-2 py-0.5 rounded-full inline-block mb-1">
                                     {{ s.category || 'خدمت تخصصی' }}
                                 </span>
-                                <h3 class="text-xs font-black text-slate-900">{{ s.title }}</h3>
+                                <h3 class="text-xs font-black text-slate-900 hover:text-limo-700 transition">{{ s.title }}</h3>
                             </div>
                             <span class="text-xs font-black text-emerald-600">{{ formatTomans(s.base_fee) }}</span>
                         </div>
-                        <p class="text-[11px] text-slate-500 leading-relaxed">{{ s.desc || 'انجام کلیه مراحل ثبت‌نام، پیگیری و دریافت مدارک توسط کارشناس کافی‌نت لیمو.' }}</p>
+                        <p class="text-[11px] text-slate-500 leading-relaxed cursor-pointer" @click="openServiceDetail(s)">
+                            {{ s.desc || 'انجام کلیه مراحل ثبت‌نام، پیگیری و دریافت مدارک توسط کارشناس کافی‌نت لیمو.' }}
+                        </p>
                         
                         <div class="pt-2 border-t border-slate-50 flex items-center justify-between">
                             <span class="text-[10px] text-slate-400 font-medium">⚡ انجام آنلاین و پیگیری لحظه‌ای</span>
                             <div class="flex gap-1.5">
                                 <button @click="openServiceDetail(s)"
-                                    class="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs transition">
-                                    توضیحات و راهنما 📋
+                                    class="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs transition flex items-center gap-1">
+                                    <span>توضیحات و راهنما</span>
+                                    <span>📋</span>
                                 </button>
-                                <button @click="openServiceForm(s)"
+                                <button @click="openServiceDetail(s)"
                                     class="px-3.5 py-1.5 bg-gradient-to-r from-limo-500 to-lime-600 hover:from-limo-400 hover:to-lime-500 text-slate-950 font-black rounded-xl text-xs transition shadow-sm">
-                                    ثبت سفارش
+                                    انتخاب خدمت
                                 </button>
                             </div>
                         </div>
@@ -859,106 +951,7 @@ html_content = """<!DOCTYPE html>
     <script>
 
         // کاتالوگ پشتیبان آفلاین (Offline Fallback Catalog) جهت لود آنی و بدون فریز در پروکسی تلگرام
-        const FALLBACK_BOOTSTRAP_DATA = {
-            categories: [
-                { id: 7, code: 'TAX', title: '💼 امور مالیاتی و اصناف', description: 'خدمات اظهارنامه، ثبت نام مالیاتی و پرونده اصناف' },
-                { id: 4, code: 'GOVERNMENT_INTERNET', title: '🏛 سایر خدمات اینترنتی و اداری', description: 'انواع ثبت‌نام‌ها و خدمات اداری و دولتی الکترونیک' },
-                { id: 3, code: 'TICKETS_TRAVEL', title: '✈️ بلیت هواپیما، قطار و اتوبوس', description: 'صدور و استعلام بلیت کلیه خطوط ریلی، پروازی و جاده‌ای کشور' },
-                { id: 2, code: 'UNIVERSITY_SERVICES', title: '🎓 خدمات دانشگاهی و آزمون‌ها', description: 'امور ثبت‌نام آزمون‌های سراسری، تاییدیه تحصیلی و سامانه‌های آموزشی' },
-                { id: 1, code: 'ALIEN_AND_CODES', title: '🌐 امور اتباع و کدها', description: 'نوبت‌دهی تثبیت هویت، سامانه امور دانشجویان بین‌الملل و پذیرش اتباع' }
-            ],
-            services: [
-                {
-                    id: 1, category_id: 1, code: 'EMT_VERIFICATION', title: 'استعلام تاییدیه تحصیلی و کد صحت',
-                    desc: 'دریافت استعلام رسمی مدرک دیپلم و پیش‌دانشگاهی از سامانه وزارت آموزش و پرورش (emt.medu.ir) جهت ثبت‌نام دانشگاه.',
-                    guide_content: 'مراحل انجام کار:\n۱. ثبت مشخصات فردی و تحصیلی داوطلب\n۲. دریافت کد پیگیری استعلام از سامانه وزارت آموزش و پرورش\n۳. ارسال به دانشگاه یا سازمان استعلام‌گیرنده\n\nمدارک لازم: تصویر گواهی موقت دیپلم یا مدرک پایان تحصیلات به همراه کد ملی ۱۰ رقمی.',
-                    official_url: 'https://emt.medu.ir/',
-                    category: '🎓 خدمات دانشجویی و آزمون‌ها', base_fee: 50000,
-                    required_fields: [
-                        { key: 'national_id', label: 'کد ملی ۱۰ رقمی متقاضی', type: 'text', required: true },
-                        { key: 'education_level', label: 'مقطع تحصیلی (دیپلم / پیش‌دانشگاهی)', type: 'text', required: true },
-                        { key: 'school_name', label: 'نام دبیرستان یا مدرسه محل تحصیل', type: 'text', required: true },
-                        { key: 'graduation_year', label: 'سال فراغت از تحصیل', type: 'text', required: true },
-                        { key: 'destination_org', label: 'نام دانشگاه یا سازمان استعلام‌گیرنده', type: 'text', required: true }
-                    ],
-                    required_docs: ['تصویر مدرک تحصیلی یا گواهی موقت', 'تصویر کارت ملی یا شناسنامه']
-                },
-                {
-                    id: 2, category_id: 1, code: 'SANJESH_REGISTRATION', title: 'ثبت‌نام آزمون‌های سازمان سنجش',
-                    desc: 'ثبت‌نام، ویرایش اطلاعات، دریافت کد سوابق تحصیلی مای‌مدیو و آزمون‌های سراسری سازمان سنجش.',
-                    guide_content: 'راهنمای ثبت‌نام:\n۱. بررسی شرایط دفترچه آزمون مورد نظر\n۲. تایید سوابق تحصیلی در سامانه مای مدیو\n۳. تکمیل فرم اینترنتی و دریافت شماره پرونده و کد پیگیری نهایی.',
-                    official_url: 'https://www.sanjesh.org/',
-                    category: '🎓 خدمات دانشجویی و آزمون‌ها', base_fee: 65000,
-                    required_fields: [
-                        { key: 'exam_type', label: 'نوع آزمون (سراسری / کارشناسی ارشد / دکتری)', type: 'text', required: true },
-                        { key: 'national_id', label: 'کد ملی داوطلب', type: 'text', required: true },
-                        { key: 'mobile_phone', label: 'شماره همراه به نام متقاضی', type: 'tel', required: true }
-                    ],
-                    required_docs: ['عکس پرسنلی ۴×۳ استاندارد', 'تصویر کارنامه یا مدرک مقطع قبلی']
-                },
-                {
-                    id: 3, category_id: 1, code: 'PNU_SERVICES', title: 'سامانه گلستان دانشگاه پیام نور',
-                    desc: 'امور انتخاب واحد، کارنامه، گواهی اشتغال به تحصیل، تسویه حساب و امور مالی در سامانه جامع گلستان پیام نور.',
-                    guide_content: 'راهنما:\nامور آموزشی و اداری شامل صدور گواهی اشتغال، پرینت فرم‌های امتحانی، تسویه شهریه و کارنامه تحصیلی بدون نیاز به مراجعه حضوری انجام می‌پذیرد.',
-                    official_url: 'https://osreg.pnu.ac.ir/forms/authenticateuser/main.htm',
-                    category: '🎓 خدمات دانشجویی و آزمون‌ها', base_fee: 45000,
-                    required_fields: [
-                        { key: 'student_id', label: 'شماره دانشجویی گلستان', type: 'text', required: true },
-                        { key: 'national_id', label: 'کد ملی دانشجو', type: 'text', required: true },
-                        { key: 'request_type', label: 'نوع درخواست (انتخاب واحد / گواهی / کارنامه)', type: 'text', required: true }
-                    ],
-                    required_docs: ['تصویر کارت دانشجویی']
-                },
-                {
-                    id: 4, category_id: 1, code: 'IAU_SERVICES', title: 'سامانه آموزشیار دانشگاه آزاد اسلامی',
-                    desc: 'انتخاب واحد، پرداخت شهریه، اخذ مجوز امتحان، مشاهده نمرات و درخواست‌های آموزشی در درگاه آموزشیار.',
-                    guide_content: 'راهنما:\nکلیه امور ثبت انتخاب واحد، تاییدیه مجوز ورود به جلسه آزمون و تسویه حساب مالی دانشجویان دانشگاه آزاد در سراسر کشور.',
-                    official_url: 'https://edu.iau.ac.ir/',
-                    category: '🎓 خدمات دانشجویی و آزمون‌ها', base_fee: 55000,
-                    required_fields: [
-                        { key: 'student_id', label: 'شماره دانشجویی آموزشیار', type: 'text', required: true },
-                        { key: 'national_id', label: 'کد ملی دانشجو', type: 'text', required: true },
-                        { key: 'campus_name', label: 'واحد دانشگاهی و مقطع', type: 'text', required: true }
-                    ],
-                    required_docs: ['تصویر کارت دانشجویی یا برگ انتخاب واحد قبلی']
-                },
-                {
-                    id: 5, category_id: 2, code: 'IVSF_APPOINTMENT', title: 'سامانه نوبت‌دهی تثبیت هویت اتباع',
-                    desc: 'اخذ نوبت اداری الکترونیکی جهت تثبیت هویت، تایید اسناد و امور هویتی اتباع در سامانه رسمی نوبت‌دهی (ivsf.nsia.gov.af).',
-                    guide_content: 'راهنمای دریافت نوبت:\n۱. نوبت‌دهی رسمی با وارد کردن اطلاعات تذکره الکترونیکی یا برگه هویتی\n۲. تعیین نزدیک‌ترین نمایندگی یا مرکز اداری مورد تقاضا\n۳. دریافت برگه رسمی نوبت‌دهی با بارکد معتبر.',
-                    official_url: 'http://ivsf.nsia.gov.af/',
-                    category: '🌐 امور کنسولی و بین‌الملل', base_fee: 120000,
-                    required_fields: [
-                        { key: 'identity_code', label: 'شماره تذکره یا شناسه هویتی متقاضی', type: 'text', required: true },
-                        { key: 'full_name', label: 'نام و نام خانوادگی مطابق مدارک', type: 'text', required: true },
-                        { key: 'phone_number', label: 'شماره تلفن همراه فعال', type: 'tel', required: true },
-                        { key: 'preferred_city', label: 'شهر یا نمایندگی مورد تقاضا', type: 'text', required: true }
-                    ],
-                    required_docs: ['تصویر تذکره یا برگه هویتی', 'تصویر گذرنامه یا برگه اقامت']
-                },
-                {
-                    id: 6, category_id: 2, code: 'ADAB_STUDENT_AFFAIRS', title: 'سامانه امور دانشجویان بین‌الملل (ادب)',
-                    desc: 'ثبت و پیگیری امور روادید تحصیلی، تمدید اقامت، امور کنسولی و پذیرش دانشجویان غیرایرانی در پورتال ادب (saorg.ir).',
-                    guide_content: 'راهنما:\nسامانه ادب متعلق به سازمان امور دانشجویان وزارت علوم بوده و فرآیندهای مربوط به اقامت تحصیلی، تمدید روادید و خروج و مراجعت دانشجویان بین‌الملل را پردازش می‌کند.',
-                    official_url: 'https://adab.saorg.ir/PortalADAB/Home/LandingPage',
-                    category: '🌐 امور کنسولی و بین‌الملل', base_fee: 90000,
-                    required_fields: [
-                        { key: 'passport_number', label: 'شماره گذرنامه معتبر', type: 'text', required: true },
-                        { key: 'tracking_or_fara_code', label: 'کد فراگیر / شناسه پیگیری سامانه ادب', type: 'text', required: true },
-                        { key: 'target_university', label: 'نام دانشگاه محل تحصیل در ایران', type: 'text', required: true }
-                    ],
-                    required_docs: ['تصویر صفحه اول گذرنامه معتبر', 'تصویر نامه پذیرش یا گواهی اشتغال به تحصیل']
-                }
-            ],
-            campaigns: [],
-            channels: [
-                { key: 'PHONE', title: 'تلفن پشتیبانی کافی‌نت لیمو: 09364519860', value: 'tel:09364519860' },
-                { key: 'EITAA', title: 'پشتیبانی ایتا', value: 'https://eitaa.com/Cafinet_limo' },
-                { key: 'TELEGRAM', title: 'کانال تلگرام', value: 'https://t.me/LimoCafeBot' },
-                { key: 'RUBIKA', title: 'پشتیبانی روبیکا', value: 'https://rubika.ir/cafinet_limo' },
-                { key: 'BALE', title: 'پشتیبانی بله', value: 'https://ble.ir/cafinet_limo' }
-            ]
-        };
+        const FALLBACK_BOOTSTRAP_DATA = {"categories": [{"id": 7, "code": "TAX", "title": "💼 امور مالیاتی و اصناف", "description": "خدمات اظهارنامه، ثبت نام مالیاتی و پرونده اصناف"}, {"id": 4, "code": "GOVERNMENT_INTERNET", "title": "🏛 سایر خدمات اینترنتی و اداری", "description": "انواع ثبت‌نام‌ها و خدمات اداری و دولتی الکترونیک"}, {"id": 3, "code": "TICKETS_TRAVEL", "title": "✈️ بلیت هواپیما، قطار و اتوبوس", "description": "صدور و استعلام بلیت کلیه خطوط ریلی، پروازی و جاده‌ای کشور"}, {"id": 2, "code": "UNIVERSITY_SERVICES", "title": "🎓 خدمات دانشگاهی و آزمون‌ها", "description": "امور ثبت‌نام آزمون‌های سراسری، تاییدیه تحصیلی و سامانه‌های آموزشی"}, {"id": 1, "code": "ALIEN_AND_CODES", "title": "🌐 امور اتباع و کدها", "description": "نوبت‌دهی تثبیت هویت، سامانه امور دانشجویان بین‌الملل و پذیرش اتباع"}], "services": [{"id": 1, "category_id": 1, "code": "EMT_VERIFICATION", "title": "استعلام تاییدیه تحصیلی و کد صحت", "desc": "دریافت استعلام رسمی مدرک دیپلم و پیش‌دانشگاهی از سامانه وزارت آموزش و پرورش (emt.medu.ir) جهت ثبت‌نام دانشگاه.", "guide_content": "مراحل انجام کار:\\n۱. ثبت مشخصات فردی و تحصیلی داوطلب\\n۲. دریافت کد پیگیری استعلام از سامانه وزارت آموزش و پرورش\\n۳. ارسال به دانشگاه یا سازمان استعلام‌گیرنده\\n\\nمدارک لازم: تصویر گواهی موقت دیپلم یا مدرک پایان تحصیلات به همراه کد ملی ۱۰ رقمی.", "official_url": "https://emt.medu.ir/", "category": "🎓 خدمات دانشجویی و آزمون‌ها", "base_fee": 50000, "required_fields": [{"key": "national_id", "label": "کد ملی ۱۰ رقمی متقاضی", "type": "text", "required": true}, {"key": "education_level", "label": "مقطع تحصیلی (دیپلم / پیش‌دانشگاهی)", "type": "text", "required": true}, {"key": "school_name", "label": "نام دبیرستان یا مدرسه محل تحصیل", "type": "text", "required": true}, {"key": "graduation_year", "label": "سال فراغت از تحصیل", "type": "text", "required": true}, {"key": "destination_org", "label": "نام دانشگاه یا سازمان استعلام‌گیرنده", "type": "text", "required": true}], "required_docs": ["تصویر مدرک تحصیلی یا گواهی موقت", "تصویر کارت ملی یا شناسنامه"]}, {"id": 2, "category_id": 1, "code": "SANJESH_REGISTRATION", "title": "ثبت‌نام آزمون‌های سازمان سنجش", "desc": "ثبت‌نام، ویرایش اطلاعات، دریافت کد سوابق تحصیلی مای‌مدیو و آزمون‌های سراسری سازمان سنجش.", "guide_content": "راهنمای ثبت‌نام:\\n۱. بررسی شرایط دفترچه آزمون مورد نظر\\n۲. تایید سوابق تحصیلی در سامانه مای مدیو\\n۳. تکمیل فرم اینترنتی و دریافت شماره پرونده و کد پیگیری نهایی.", "official_url": "https://www.sanjesh.org/", "category": "🎓 خدمات دانشجویی و آزمون‌ها", "base_fee": 65000, "required_fields": [{"key": "exam_type", "label": "نوع آزمون (سراسری / کارشناسی ارشد / دکتری)", "type": "text", "required": true}, {"key": "national_id", "label": "کد ملی داوطلب", "type": "text", "required": true}, {"key": "mobile_phone", "label": "شماره همراه به نام متقاضی", "type": "tel", "required": true}], "required_docs": ["عکس پرسنلی ۴×۳ استاندارد", "تصویر کارنامه یا مدرک مقطع قبلی"]}, {"id": 3, "category_id": 1, "code": "PNU_SERVICES", "title": "سامانه گلستان دانشگاه پیام نور", "desc": "امور انتخاب واحد، کارنامه، گواهی اشتغال به تحصیل، تسویه حساب و امور مالی در سامانه جامع گلستان پیام نور.", "guide_content": "راهنما:\\nامور آموزشی و اداری شامل صدور گواهی اشتغال، پرینت فرم‌های امتحانی، تسویه شهریه و کارنامه تحصیلی بدون نیاز به مراجعه حضوری انجام می‌پذیرد.", "official_url": "https://osreg.pnu.ac.ir/forms/authenticateuser/main.htm", "category": "🎓 خدمات دانشجویی و آزمون‌ها", "base_fee": 45000, "required_fields": [{"key": "student_id", "label": "شماره دانشجویی گلستان", "type": "text", "required": true}, {"key": "national_id", "label": "کد ملی دانشجو", "type": "text", "required": true}, {"key": "request_type", "label": "نوع درخواست (انتخاب واحد / گواهی / کارنامه)", "type": "text", "required": true}], "required_docs": ["تصویر کارت دانشجویی"]}, {"id": 4, "category_id": 1, "code": "IAU_SERVICES", "title": "سامانه آموزشیار دانشگاه آزاد اسلامی", "desc": "انتخاب واحد، پرداخت شهریه، اخذ مجوز امتحان، مشاهده نمرات و درخواست‌های آموزشی در درگاه آموزشیار.", "guide_content": "راهنما:\\nکلیه امور ثبت انتخاب واحد، تاییدیه مجوز ورود به جلسه آزمون و تسویه حساب مالی دانشجویان دانشگاه آزاد در سراسر کشور.", "official_url": "https://edu.iau.ac.ir/", "category": "🎓 خدمات دانشجویی و آزمون‌ها", "base_fee": 55000, "required_fields": [{"key": "student_id", "label": "شماره دانشجویی آموزشیار", "type": "text", "required": true}, {"key": "national_id", "label": "کد ملی دانشجو", "type": "text", "required": true}, {"key": "campus_name", "label": "واحد دانشگاهی و مقطع", "type": "text", "required": true}], "required_docs": ["تصویر کارت دانشجویی یا برگ انتخاب واحد قبلی"]}, {"id": 5, "category_id": 2, "code": "IVSF_APPOINTMENT", "title": "سامانه نوبت‌دهی تثبیت هویت اتباع", "desc": "اخذ نوبت اداری الکترونیکی جهت تثبیت هویت، تایید اسناد و امور هویتی اتباع در سامانه رسمی نوبت‌دهی (ivsf.nsia.gov.af).", "guide_content": "راهنمای دریافت نوبت:\\n۱. نوبت‌دهی رسمی با وارد کردن اطلاعات تذکره الکترونیکی یا برگه هویتی\\n۲. تعیین نزدیک‌ترین نمایندگی یا مرکز اداری مورد تقاضا\\n۳. دریافت برگه رسمی نوبت‌دهی با بارکد معتبر.", "official_url": "http://ivsf.nsia.gov.af/", "category": "🌐 امور کنسولی و بین‌الملل", "base_fee": 120000, "required_fields": [{"key": "identity_code", "label": "شماره تذکره یا شناسه هویتی متقاضی", "type": "text", "required": true}, {"key": "full_name", "label": "نام و نام خانوادگی مطابق مدارک", "type": "text", "required": true}, {"key": "phone_number", "label": "شماره تلفن همراه فعال", "type": "tel", "required": true}, {"key": "preferred_city", "label": "شهر یا نمایندگی مورد تقاضا", "type": "text", "required": true}], "required_docs": ["تصویر تذکره یا برگه هویتی", "تصویر گذرنامه یا برگه اقامت"]}, {"id": 6, "category_id": 2, "code": "ADAB_STUDENT_AFFAIRS", "title": "سامانه امور دانشجویان بین‌الملل (ادب)", "desc": "ثبت و پیگیری امور روادید تحصیلی، تمدید اقامت، امور کنسولی و پذیرش دانشجویان غیرایرانی در پورتال ادب (saorg.ir).", "guide_content": "راهنما:\\nسامانه ادب متعلق به سازمان امور دانشجویان وزارت علوم بوده و فرآیندهای مربوط به اقامت تحصیلی، تمدید روادید و خروج و مراجعت دانشجویان بین‌الملل را پردازش می‌کند.", "official_url": "https://adab.saorg.ir/PortalADAB/Home/LandingPage", "category": "🌐 امور کنسولی و بین‌الملل", "base_fee": 90000, "required_fields": [{"key": "passport_number", "label": "شماره گذرنامه معتبر", "type": "text", "required": true}, {"key": "tracking_or_fara_code", "label": "کد فراگیر / شناسه پیگیری سامانه ادب", "type": "text", "required": true}, {"key": "target_university", "label": "نام دانشگاه محل تحصیل در ایران", "type": "text", "required": true}], "required_docs": ["تصویر صفحه اول گذرنامه معتبر", "تصویر نامه پذیرش یا گواهی اشتغال به تحصیل"]}], "campaigns": [], "channels": [{"key": "PHONE", "title": "تلفن پشتیبانی کافی‌نت لیمو: 09364519860", "value": "tel:09364519860"}, {"key": "EITAA", "title": "پشتیبانی ایتا", "value": "https://eitaa.com/Cafinet_limo"}, {"key": "TELEGRAM", "title": "کانال تلگرام", "value": "https://t.me/LimoCafeBot"}, {"key": "RUBIKA", "title": "پشتیبانی روبیکا", "value": "https://rubika.ir/cafinet_limo"}, {"key": "BALE", "title": "پشتیبانی بله", "value": "https://ble.ir/cafinet_limo"}]};
 
         function normalizeClientFields(raw) {
             if (!raw) return [];
@@ -1256,11 +1249,21 @@ html_content = """<!DOCTYPE html>
                     orderError.value = '';
 
                     const payload = {
+                        service_code: selectedService.value?.code || 'GENERAL',
                         serviceCode: selectedService.value?.code || 'GENERAL',
+                        service_id: selectedService.value?.id,
                         serviceId: selectedService.value?.id,
+                        full_name: orderFormData.value.fullName,
                         fullName: orderFormData.value.fullName,
+                        phone_number: orderFormData.value.phoneNumber,
                         phoneNumber: orderFormData.value.phoneNumber,
+                        national_code: orderFormData.value.nationalCode,
                         nationalCode: orderFormData.value.nationalCode,
+                        telegram_id: telegramUserId.value,
+                        form_data: {
+                            ...dynamicFieldValues.value,
+                            notes: orderFormData.value.notes
+                        },
                         formData: {
                             ...dynamicFieldValues.value,
                             notes: orderFormData.value.notes
@@ -1349,8 +1352,44 @@ html_content = """<!DOCTYPE html>
                     return map[st] || st;
                 }
 
-                onMounted(() => {
-                    loadInitialData();
+                // ناوبری خودکار بر اساس پارامترهای لینک تلگرام (?svc=... & ?cat=... & ?tab=...)
+                function handleInitialNavigation() {
+                    try {
+                        const urlParams = new URLSearchParams(window.location.search);
+                        const svcParam = urlParams.get('svc');
+                        const catParam = urlParams.get('cat');
+                        const tabParam = urlParams.get('tab');
+                        const codeParam = urlParams.get('code');
+
+                        if (svcParam) {
+                            const foundSvc = services.value.find(s => s.code === svcParam || String(s.id) === svcParam);
+                            if (foundSvc) {
+                                openServiceDetail(foundSvc);
+                                return;
+                            }
+                        }
+                        if (catParam) {
+                            const foundCat = categories.value.find(c => c.code === catParam || String(c.id) === catParam);
+                            selectedCategory.value = foundCat ? foundCat.id : catParam;
+                            currentTab.value = 'services';
+                            return;
+                        }
+                        if (tabParam) {
+                            currentTab.value = tabParam;
+                            return;
+                        }
+                        if (codeParam) {
+                            currentTab.value = 'profile';
+                            return;
+                        }
+                    } catch(e) {
+                        console.warn('Initial navigation error:', e);
+                    }
+                }
+
+                onMounted(async () => {
+                    await loadInitialData();
+                    handleInitialNavigation();
                     // بررسی دوره‌ای پیام‌های چت
                     setInterval(() => {
                         if (currentTab.value === 'chat') {

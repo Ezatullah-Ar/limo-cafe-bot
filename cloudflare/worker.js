@@ -61,6 +61,7 @@ function normalizeDocs(raw) {
 import { ADMIN_DASHBOARD_HTML } from "./admin_html.js";
 import { CLIENT_WEBAPP_HTML } from "./miniapp_html.js";
 import { MOTION_LOGO_MP4_BASE64, MOTION_POSTER_WEBP_BASE64 } from "./motion_assets.js";
+import { VUE_JS } from "./vue_asset.js";
 /**
  * Cloudflare Worker - ربات تلگرام «کافی نت لیمو»
  * اجرای بومی روی شبکه لبه‌ای کلودفلر (Edge Cloud) متصل به دیتابیس ابری Cloudflare D1
@@ -156,6 +157,15 @@ export default {
     const reqUrl = new URL(request.url);
     const botToken = env.BOT_TOKEN || "";
     const adminId = parseInt(env.ADMIN_ID || "1", 10);
+        if (reqUrl.pathname === "/vue.global.prod.js") {
+      return new Response(VUE_JS, {
+        headers: {
+          "Content-Type": "application/javascript; charset=utf-8",
+          "Cache-Control": "public, max-age=31536000, immutable"
+        }
+      });
+    }
+
     if (reqUrl.pathname === "/webapp") {
       return new Response(CLIENT_WEBAPP_HTML, {
         headers: { "Content-Type": "text/html; charset=utf-8" }
@@ -206,12 +216,12 @@ export default {
     if (reqUrl.pathname === "/api/order/submit" && request.method === "POST") {
       try {
         const body = await request.json();
-        const serviceCode = (body.service_code || "").trim();
-        const fullName = (body.full_name || "").trim();
-        const phoneNumber = (body.phone_number || "").trim();
-        const notes = (body.notes || "").trim();
-        const formData = body.form_data || {};
-        const telegramId = body.telegram_id ? parseInt(body.telegram_id, 10) : null;
+        const serviceCode = (body.service_code || body.serviceCode || "").trim();
+        const fullName = (body.full_name || body.fullName || "").trim();
+        const phoneNumber = (body.phone_number || body.phoneNumber || "").trim();
+        const notes = (body.notes || (body.formData && body.formData.notes) || (body.form_data && body.form_data.notes) || "").trim();
+        const formData = body.form_data || body.formData || {};
+        const telegramId = (body.telegram_id !== undefined ? body.telegram_id : body.telegramId) ? parseInt(body.telegram_id || body.telegramId, 10) : null;
         const username = body.username || null;
 
         if (!serviceCode || !fullName || !phoneNumber) {
@@ -799,6 +809,16 @@ export default {
       }
 
       return false;
+    }
+
+        // حفاظت سراسری امنیتی از کلیه اندپوینت‌های پنل مدیریت (/api/admin/*)
+    if (reqUrl.pathname.startsWith("/api/admin/")) {
+      if (!checkAdminAuth(request, env)) {
+        return new Response(JSON.stringify({ ok: false, error: "Unauthorized" }), {
+          status: 401,
+          headers: { "Content-Type": "application/json" }
+        });
+      }
     }
 
     // ۱. دریافت داده‌های داشبورد ادمین (آمار، سفارش‌ها، مانیتورها)
@@ -1499,8 +1519,10 @@ export default {
     // ارسال پیام جدید از مینی‌اپ به کارشناس
     if (reqUrl.pathname === "/api/client/support/send" && request.method === "POST") {
       const db = env.DB;
-      const { telegram_id, full_name, message } = await request.json();
-      const tgId = parseInt(telegram_id || "0", 10);
+      const sbody = await request.json();
+      const tgId = parseInt(sbody.telegram_id || sbody.telegramId || "0", 10);
+      const full_name = sbody.full_name || sbody.fullName || "کاربر مینی‌اپ";
+      const message = sbody.message || "";
       if (!db || !tgId || !message?.trim()) {
         return new Response(JSON.stringify({ ok: false, error: "متن پیام الزامی است." }), { status: 400, headers: { "Content-Type": "application/json" } });
       }
@@ -2697,7 +2719,7 @@ export default {
         channels: 'communication_channels',
         channel: 'communication_channels'
       };
-      const sqlTable = tableMap[table];
+      const sqlTable = tableMap[targetTable];
       if (sqlTable && id !== undefined && targetPrio !== undefined && env.DB) {
         await env.DB.prepare(`UPDATE ${sqlTable} SET order_priority = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`).bind(parseInt(targetPrio, 10) || 0, id).run();
         return new Response(JSON.stringify({ ok: true }), { headers: { "Content-Type": "application/json" } });
