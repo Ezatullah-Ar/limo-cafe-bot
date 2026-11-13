@@ -149,6 +149,193 @@ function formatOrderStepperText(status) {
   return { stepsText: steps.join("\n"), actionRequired: action };
 }
 
+// ========================================================
+// کش حافظه دارایی‌های باینری برای جلوگیری از پردازش مکرر Base64
+// ========================================================
+let cachedLogoBinary = null;
+function getLogoBinary() {
+  if (!cachedLogoBinary) {
+    cachedLogoBinary = Uint8Array.from(atob(LOGO_PNG_BASE64), c => c.charCodeAt(0));
+  }
+  return cachedLogoBinary;
+}
+
+let cachedMotionBinary = null;
+function getMotionBinary() {
+  if (!cachedMotionBinary) {
+    cachedMotionBinary = Uint8Array.from(atob(MOTION_LOGO_MP4_BASE64), c => c.charCodeAt(0));
+  }
+  return cachedMotionBinary;
+}
+
+let cachedPosterBinary = null;
+function getPosterBinary() {
+  if (!cachedPosterBinary) {
+    cachedPosterBinary = Uint8Array.from(atob(MOTION_POSTER_WEBP_BASE64), c => c.charCodeAt(0));
+  }
+  return cachedPosterBinary;
+}
+
+// ========================================================
+// توابع اعتبارسنجی امنیتی سراسری (Constant-Time & Crypto Verification)
+// ========================================================
+
+/**
+ * مقایسه دو رشته در زمان‌ثابت جهت جلوگیری از حملات کانال جانبی (Timing Attack)
+ */
+function timingSafeEqualStr(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string') return false;
+  const aLen = a.length;
+  const bLen = b.length;
+  const maxLen = Math.max(aLen, bLen);
+  let result = aLen ^ bLen;
+  for (let i = 0; i < maxLen; i++) {
+    const aChar = i < aLen ? a.charCodeAt(i) : 0;
+    const bChar = i < bLen ? b.charCodeAt(i) : 0;
+    result |= aChar ^ bChar;
+  }
+  return result === 0;
+}
+
+/**
+ * اعتبارسنجی احراز هویت ادمین بدون هیچ رمز هاردکدشده
+ * تنها بر پایه Authorization: Basic / Bearer و x-admin-key در برابر env.ADMIN_PASSWORD
+ */
+async function checkAdminAuth(req, env) {
+  if (!env) return false;
+  const configuredPassword = (env.ADMIN_PASSWORD || env.ADMIN_KEY || "").trim();
+  if (!configuredPassword) {
+    // عدم تنظیم رمز عبور ادمین در محیط باعث مسدود شدن خودکار تمام دسترسی‌ها می‌شود (Fail-Closed)
+    return false;
+  }
+
+  const expectedUser = (env.ADMIN_USERNAME || "admin").trim().toLowerCase();
+  const authHeader = req.headers.get("Authorization") || req.headers.get("authorization") || "";
+  let user = req.headers.get("x-admin-username") || "";
+  let pass = req.headers.get("x-admin-key") || req.headers.get("x-admin-password") || "";
+
+  if (authHeader.startsWith("Basic ") || authHeader.startsWith("basic ")) {
+    try {
+      const base64Credentials = authHeader.split(" ")[1];
+      const decoded = atob(base64Credentials);
+      const colonIndex = decoded.indexOf(":");
+      if (colonIndex !== -1) {
+        user = decoded.substring(0, colonIndex);
+        pass = decoded.substring(colonIndex + 1);
+      }
+    } catch (err) {}
+  } else if (authHeader.startsWith("Bearer ") || authHeader.startsWith("bearer ")) {
+    const token = authHeader.split(" ")[1]?.trim() || "";
+    if (token.includes(":")) {
+      const parts = token.split(":");
+      user = parts[0];
+      pass = parts[1];
+    } else {
+      user = expectedUser;
+      pass = token;
+    }
+  }
+
+  user = (user || "").trim().toLowerCase();
+  pass = (pass || "").trim()
+    .replace(/[۰-۹]/g, d => '۰۱۲۳۴۵۶۷۸۹'.indexOf(d))
+    .replace(/[٠-٩]/g, d => '٠١٢٣٤٥٦٧٨٩'.indexOf(d));
+
+  if (!user || !pass) return false;
+
+  const isUserValid = await timingSafeEqualStr(user, expectedUser);
+  const isPassValid = await timingSafeEqualStr(pass, configuredPassword);
+
+  return isUserValid && isPassValid;
+}
+
+/**
+ * اعتبارسنجی رسمی امضای دیجیتال Telegram.WebApp.initData با الگوریتم HMAC-SHA256
+ */
+async function verifyTelegramWebAppData(initDataRaw, botToken) {
+  if (!initDataRaw || !botToken || typeof initDataRaw !== 'string') return null;
+  try {
+    const params = new URLSearchParams(initDataRaw);
+    const hash = params.get("hash");
+    if (!hash) return null;
+    params.delete("hash");
+
+    // بررسی تازگی نشست (حداکثر ۲۴ ساعت)
+    const authDate = parseInt(params.get("auth_date") || "0", 10);
+    const now = Math.floor(Date.now() / 1000);
+    if (!authDate || Math.abs(now - authDate) > 86400) {
+      return null;
+    }
+
+    const sortedKeys = Array.from(params.keys()).sort();
+    const dataCheckString = sortedKeys.map(k => `${k}=${params.get(k)}`).join("\n");
+
+    const enc = new TextEncoder();
+    // محاسبه کلید مخفی: HMAC_SHA256("WebAppData", botToken)
+    const secretKeyMaterial = await crypto.subtle.importKey(
+      "raw",
+      enc.encode("WebAppData"),
+      { name: "HMAC", hash: "SHA-256" },
+      false,
+      ["sign"]
+    );
+    const secretKeyBytes = await crypto.subtle.sign("HMAC", secretKeyMaterial, enc.encode(botToken));
+
+    // محاسبه هش: HMAC_SHA256(secretKeyBytes, dataCheckString)
+    const signingKey = await crypto.subtle.importKey(
+      "raw",
+      secretKeyBytes,
+      { name: "HMAC", hash: "SHA-256" },
+      false,
+      ["sign"]
+    );
+    const signature = await crypto.subtle.sign("HMAC", signingKey, enc.encode(dataCheckString));
+    const calculatedHash = Array.from(new Uint8Array(signature)).map(b => b.toString(16).padStart(2, '0')).join('');
+
+    if (!timingSafeEqualStr(calculatedHash, hash.toLowerCase())) {
+      return null;
+    }
+
+    const userRaw = params.get("user");
+    let user = null;
+    if (userRaw) {
+      user = JSON.parse(userRaw);
+    }
+    return {
+      user,
+      auth_date: authDate,
+      query_id: params.get("query_id") || null
+    };
+  } catch (err) {
+    return null;
+  }
+}
+
+/**
+ * دریافت اطلاعات کاربر تلگرام تأییدشده از هدر یا کوئری
+ */
+async function getAuthenticatedClient(req, env) {
+  let initData = req.headers.get("X-Telegram-Init-Data") || req.headers.get("x-telegram-init-data") || "";
+  if (!initData) {
+    try {
+      const u = new URL(req.url);
+      initData = u.searchParams.get("initData") || "";
+    } catch(e) {}
+  }
+  if (!initData || !env.BOT_TOKEN) return null;
+  return await verifyTelegramWebAppData(initData, env.BOT_TOKEN);
+}
+
+/**
+ * صدور کد رهگیری تصادفی و رمزنگاری‌شده با آنتروپی بالا
+ */
+function generateSecureTrackingCode() {
+  const bytes = new Uint8Array(4);
+  crypto.getRandomValues(bytes);
+  const hex = Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('').toUpperCase();
+  return `LIMO-1405-${hex}`;
+}
+
 export default {
   /**
    * پردازشگر درخواست‌های وب‌هوک تلگرام
@@ -156,7 +343,8 @@ export default {
   async fetch(request, env, ctx) {
     const reqUrl = new URL(request.url);
     const botToken = env.BOT_TOKEN || "";
-    const adminId = parseInt(env.ADMIN_ID || "1", 10);
+    const rawAdminId = env.ADMIN_ID ? parseInt(env.ADMIN_ID, 10) : null;
+    const adminId = (rawAdminId && !isNaN(rawAdminId) && rawAdminId > 0) ? rawAdminId : null;
         if (reqUrl.pathname === "/vue.global.prod.js") {
       return new Response(VUE_JS, {
         headers: {
@@ -173,8 +361,7 @@ export default {
     }
 
     if (reqUrl.pathname === "/logo.png" || reqUrl.pathname === "/avatar.png" || reqUrl.pathname === "/favicon.ico") {
-      const binary = Uint8Array.from(atob(LOGO_PNG_BASE64), c => c.charCodeAt(0));
-      return new Response(binary, {
+      return new Response(getLogoBinary(), {
         headers: {
           "Content-Type": "image/png",
           "Cache-Control": "public, max-age=31536000, immutable"
@@ -184,8 +371,7 @@ export default {
 
     // موشن‌گرافیک فوق‌بهینه لوگوی کافی‌نت لیمو (MP4 بهینه ۲۰ کیلوبایت)
     if (reqUrl.pathname === "/motion-logo.mp4") {
-      const binary = Uint8Array.from(atob(MOTION_LOGO_MP4_BASE64), c => c.charCodeAt(0));
-      return new Response(binary, {
+      return new Response(getMotionBinary(), {
         headers: {
           "Content-Type": "video/mp4",
           "Cache-Control": "public, max-age=31536000, immutable"
@@ -195,8 +381,7 @@ export default {
 
     // پوستر استاتیک برای لود فوری موشن‌گرافیک (WebP بهینه ۲.۸ کیلوبایت)
     if (reqUrl.pathname === "/motion-logo-poster.webp") {
-      const binary = Uint8Array.from(atob(MOTION_POSTER_WEBP_BASE64), c => c.charCodeAt(0));
-      return new Response(binary, {
+      return new Response(getPosterBinary(), {
         headers: {
           "Content-Type": "image/webp",
           "Cache-Control": "public, max-age=31536000, immutable"
@@ -324,9 +509,23 @@ export default {
         const serviceTitle = svc ? svc.title : "خدمت کافی‌نت لیمو";
 
         // ۲. یافتن یا ایجاد مشتری
-        const actualTelegramId = telegramId ? parseInt(telegramId, 10) : (900000000 + Math.floor(Math.random() * 100000000));
+        const clientAuth = await getAuthenticatedClient(request, env);
+        let actualTelegramId = null;
+        let actualUsername = username || null;
+
+        if (clientAuth?.user?.id) {
+          actualTelegramId = clientAuth.user.id;
+          actualUsername = clientAuth.user.username || actualUsername;
+        } else if (telegramId) {
+          // اگر کاربری ادعای telegram_id کند ولی داده‌های معتبر WebApp را ارائه ندهد، جعل هویت مسدود می‌شود
+          return new Response(JSON.stringify({
+            ok: false,
+            error: "برای انتساب سفارش به حساب تلگرام، احراز هویت وب‌اپلیکیشن تلگرام الزامی است."
+          }), { status: 401, headers: { "Content-Type": "application/json" } });
+        }
+
         let u = null;
-        if (telegramId) {
+        if (actualTelegramId) {
           u = await db.prepare("SELECT id FROM users WHERE telegram_id = ?").bind(actualTelegramId).first();
         } else if (phoneNumber) {
           u = await db.prepare("SELECT id FROM users WHERE phone_number = ?").bind(phoneNumber).first();
@@ -334,18 +533,17 @@ export default {
 
         if (!u) {
           const insU = await db.prepare("INSERT INTO users (telegram_id, full_name, username, phone_number) VALUES (?, ?, ?, ?)")
-            .bind(actualTelegramId, fullName, username || '', phoneNumber).run();
+            .bind(actualTelegramId, fullName, actualUsername || '', phoneNumber).run();
           u = { id: insU?.meta?.last_row_id || 1 };
         } else if (phoneNumber) {
           await db.prepare("UPDATE users SET full_name = ?, phone_number = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
             .bind(fullName, phoneNumber, u.id).run();
         }
 
-        // ۳. صدور کد رهگیری یکتا و تصادفی (LIMO-1405-XXXXX)
+        // ۳. صدور کد رهگیری یکتا و رمزنگاری‌شده (LIMO-1405-XXXXXXXX)
         let trackingCode = "";
         for (let attempt = 0; attempt < 10; attempt++) {
-          const randNum = Math.floor(10000 + Math.random() * 90000);
-          const candidate = `LIMO-1405-${randNum}`;
+          const candidate = generateSecureTrackingCode();
           const existing = await db.prepare("SELECT id FROM orders WHERE tracking_code = ?").bind(candidate).first();
           if (!existing) {
             trackingCode = candidate;
@@ -353,7 +551,7 @@ export default {
           }
         }
         if (!trackingCode) {
-          trackingCode = `LIMO-1405-${Date.now().toString().slice(-5)}`;
+          trackingCode = `LIMO-1405-${Date.now().toString(36).toUpperCase()}`;
         }
 
         // جلوگیری از ثبت سفارش تکراری در فاصله کمتر از ۱۰ ثانیه
@@ -432,7 +630,7 @@ export default {
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
                 chat_id: adminId,
-                text: `🔔 <b>سفارش جدید در کافی نت لیمو ثبت شد!</b>\n\n🔖 <b>کد رهگیری:</b> <code>${trackingCode}</code>\n📋 <b>خدمت:</b> ${serviceTitle}\n👤 <b>متقاضی:</b> ${fullName}\n📞 <b>تلفن:</b> <code>${phoneNumber}</code>\n\n<i>پرونده در وضعیت «در انتظار بررسی» قرار گرفت.</i>`,
+                text: `🔔 <b>سفارش جدید در کافی نت لیمو ثبت شد!</b>\n\n🔖 <b>کد رهگیری:</b> <code>${escapeHtml(trackingCode)}</code>\n📋 <b>خدمت:</b> ${escapeHtml(serviceTitle)}\n👤 <b>متقاضی:</b> ${escapeHtml(fullName)}\n📞 <b>تلفن:</b> <code>${escapeHtml(phoneNumber)}</code>\n\n<i>پرونده در وضعیت «در انتظار بررسی» قرار گرفت.</i>`,
                 parse_mode: "HTML"
               })
             })
@@ -470,10 +668,11 @@ export default {
         });
       }
       const ord = await db.prepare(`
-        SELECT o.*, s.title as service_title
+        SELECT o.*, s.title as service_title, u.telegram_id as user_tg_id, u.phone_number as user_phone
         FROM orders o
         LEFT JOIN service_items s ON o.service_id = s.id
-        WHERE o.tracking_code = ?
+        LEFT JOIN users u ON o.user_id = u.id
+        WHERE o.tracking_code = ? AND o.deleted_at IS NULL
       `).bind(code).first();
 
       if (!ord) {
@@ -481,6 +680,32 @@ export default {
           status: 404, headers: { "Content-Type": "application/json" }
         });
       }
+
+      // ارزیابی صلاحیت دسترسی به مدارک حساس و خروجی نهایی
+      const clientAuth = await getAuthenticatedClient(request, env);
+      const verifyPhone = (reqUrl.searchParams.get("phone") || "").trim().replace(/^(\+98|0098|98)/, '0');
+      const verifyNational = (reqUrl.searchParams.get("national_code") || "").trim();
+
+      let isOwner = false;
+      if (clientAuth?.user?.id && ord.user_tg_id && clientAuth.user.id === ord.user_tg_id) {
+        isOwner = true;
+      } else if (verifyPhone && ord.user_phone && verifyPhone === ord.user_phone.replace(/^(\+98|0098|98)/, '0')) {
+        isOwner = true;
+      }
+
+      let formData = {};
+      try {
+        formData = typeof ord.form_data === "string" ? JSON.parse(ord.form_data) : (ord.form_data || {});
+      } catch (e) {}
+
+      if (!isOwner && verifyNational && formData) {
+        if (formData.ownerNationalCode === verifyNational || formData.national_code === verifyNational) {
+          isOwner = true;
+        }
+      }
+
+      const resultDoc = (isOwner && formData.result_document) ? formData.result_document : null;
+      const hasResultDoc = Boolean(formData.result_document);
 
       const statusMap = {
         "PENDING": "در انتظار پرداخت و ارسال فیش ⏳",
@@ -492,11 +717,6 @@ export default {
         "COMPLETED": "تکمیل شده و مختومه 🎉",
         "CANCELLED": "لغو گردیده ❌"
       };
-
-      let formData = {};
-      try {
-        formData = typeof ord.form_data === "string" ? JSON.parse(ord.form_data) : (ord.form_data || {});
-      } catch (e) {}
 
       // محاسبه وضعیت گام‌های ۴ گانه استپر
       const steps = [
@@ -553,7 +773,9 @@ export default {
           updated_at: ord.updated_at,
           steps: steps,
           needs_info: ord.status === "NEED_INFO",
-          result_document: formData.result_document || null
+          result_document: resultDoc,
+          result_document_available: hasResultDoc,
+          is_authorized_owner: isOwner
         }
       }), {
         headers: { "Content-Type": "application/json" }
@@ -741,79 +963,10 @@ export default {
 
 
 
-    // بررسی احراز هویت توکن ادمین برای REST APIها
-
-    function checkAdminAuth(req, e) {
-      const authHeader = req.headers.get("Authorization") || "";
-      let user = req.headers.get("x-admin-username") || "";
-      let pass = req.headers.get("x-admin-key") || req.headers.get("x-admin-password") || "";
-
-      if (authHeader.startsWith("Basic ") || authHeader.startsWith("basic ")) {
-        try {
-          const base64Credentials = authHeader.split(" ")[1];
-          const decoded = atob(base64Credentials);
-          const colonIndex = decoded.indexOf(":");
-          if (colonIndex !== -1) {
-            user = decoded.substring(0, colonIndex);
-            pass = decoded.substring(colonIndex + 1);
-          }
-        } catch(err) {}
-      } else if (authHeader.startsWith("Bearer ") || authHeader.startsWith("bearer ")) {
-        const token = authHeader.split(" ")[1].trim();
-        if (token.includes(":")) {
-          const parts = token.split(":");
-          user = parts[0];
-          pass = parts[1];
-        } else {
-          pass = token;
-        }
-      }
-
-      try {
-        const url = new URL(req.url);
-        if (!user && url.searchParams.get("user")) user = url.searchParams.get("user");
-        if (!pass && url.searchParams.get("key")) pass = url.searchParams.get("key");
-        if (!pass && url.searchParams.get("pass")) pass = url.searchParams.get("pass");
-      } catch(err) {}
-
-      user = (user || "").trim().toLowerCase();
-      pass = (pass || "").trim()
-        .replace(/[۰-۹]/g, d => '۰۱۲۳۴۵۶۷۸۹'.indexOf(d))
-        .replace(/[٠-٩]/g, d => '٠١٢٣٤٥٦٧٨٩'.indexOf(d));
-
-      const validUsers = [
-        "admin",
-        "limo_admin",
-        (e.ADMIN_USERNAME || "").trim().toLowerCase()
-      ].filter(Boolean);
-
-      const validPasswords = [
-        "limo_admin_2026",
-        "limo_admin",
-        "admin123",
-        "limo1405",
-        "limo2026",
-        e.ADMIN_KEY,
-        e.ADMIN_PASSWORD,
-        e.SECRET_TOKEN
-      ].filter(Boolean);
-
-      const isUserValid = validUsers.includes(user);
-      const isPassValid = validPasswords.includes(pass);
-      if (isUserValid && isPassValid) {
-        return true;
-      }
-
-      if (!user && pass && (pass === e.ADMIN_KEY || pass === e.SECRET_TOKEN || pass === String(e.ADMIN_ID || "") || pass === e.BOT_TOKEN)) {
-        return true;
-      }
-
-      return false;
-    }
-
-        // حفاظت سراسری امنیتی از کلیه اندپوینت‌های پنل مدیریت (/api/admin/*)
+    // حفاظت سراسری امنیتی از کلیه اندپوینت‌های پنل مدیریت (/api/admin/*)
     if (reqUrl.pathname.startsWith("/api/admin/")) {
-      if (!checkAdminAuth(request, env)) {
+      const isAuthed = await checkAdminAuth(request, env);
+      if (!isAuthed) {
         return new Response(JSON.stringify({ ok: false, error: "Unauthorized" }), {
           status: 401,
           headers: { "Content-Type": "application/json" }
@@ -823,28 +976,39 @@ export default {
 
     // ۱. دریافت داده‌های داشبورد ادمین (آمار، سفارش‌ها، مانیتورها)
     if (reqUrl.pathname === "/api/admin/data") {
-      if (!checkAdminAuth(request, env)) {
-        return new Response(JSON.stringify({ ok: false, error: "Unauthorized" }), {
-          status: 401, headers: { "Content-Type": "application/json" }
-        });
-      }
       const db = env.DB;
       let stats = { total_orders: 0, pending_orders: 0, approved_orders: 0, need_info_orders: 0, completed_orders: 0, total_users: 0 };
       let orders = [];
       if (db) {
         try {
-          const totOrd = await db.prepare("SELECT COUNT(*) as c FROM orders WHERE deleted_at IS NULL").first();
-          const pendOrd = await db.prepare("SELECT COUNT(*) as c FROM orders WHERE status = 'PENDING' AND deleted_at IS NULL").first();
-          const appOrd = await db.prepare("SELECT COUNT(*) as c FROM orders WHERE status = 'APPROVED' AND deleted_at IS NULL").first();
-          const needOrd = await db.prepare("SELECT COUNT(*) as c FROM orders WHERE status = 'NEED_INFO' AND deleted_at IS NULL").first();
-          const compOrd = await db.prepare("SELECT COUNT(*) as c FROM orders WHERE status = 'COMPLETED' AND deleted_at IS NULL").first();
+          const orderCounts = await db.prepare(`
+            SELECT status, COUNT(*) as c
+            FROM orders
+            WHERE deleted_at IS NULL
+            GROUP BY status
+          `).all();
+
+          let totalOrders = 0;
+          let pendingOrders = 0;
+          let approvedOrders = 0;
+          let needInfoOrders = 0;
+          let completedOrders = 0;
+
+          for (const row of (orderCounts.results || [])) {
+            totalOrders += row.c;
+            if (row.status === 'PENDING') pendingOrders = row.c;
+            else if (row.status === 'APPROVED') approvedOrders = row.c;
+            else if (row.status === 'NEED_INFO') needInfoOrders = row.c;
+            else if (row.status === 'COMPLETED') completedOrders = row.c;
+          }
+
           const totUsers = await db.prepare("SELECT COUNT(*) as c FROM users WHERE deleted_at IS NULL").first();
           stats = {
-            total_orders: totOrd?.c || 0,
-            pending_orders: pendOrd?.c || 0,
-            approved_orders: appOrd?.c || 0,
-            need_info_orders: needOrd?.c || 0,
-            completed_orders: compOrd?.c || 0,
+            total_orders: totalOrders,
+            pending_orders: pendingOrders,
+            approved_orders: approvedOrders,
+            need_info_orders: needInfoOrders,
+            completed_orders: completedOrders,
             total_users: totUsers?.c || 0
           };
           const ordRes = await db.prepare(`
@@ -867,11 +1031,6 @@ export default {
 
     // ۲. به‌روزرسانی وضعیت سفارش از داشبورد ادمین
     if (reqUrl.pathname === "/api/admin/order/status" && request.method === "POST") {
-      if (!checkAdminAuth(request, env)) {
-        return new Response(JSON.stringify({ ok: false, error: "Unauthorized" }), {
-          status: 401, headers: { "Content-Type": "application/json" }
-        });
-      }
       const db = env.DB;
       const body = await request.json();
       const { order_id, status, operator_notes, internal_notes, result_document } = body;
@@ -893,7 +1052,7 @@ export default {
         try {
           const logNote = internal_notes ? `${operator_notes || ''} [یادداشت داخلی: ${internal_notes}]`.trim() : (operator_notes || "به‌روزرسانی وضعیت از پنل مدیریت");
           await db.prepare("INSERT INTO order_audit_logs (order_id, actor_id, from_status, to_status, note) VALUES (?, ?, ?, ?, ?)")
-            .bind(order_id, adminId, prevOrder ? prevOrder.status : status, status, logNote).run();
+            .bind(order_id, adminId || 0, prevOrder ? prevOrder.status : status, status, logNote).run();
         } catch (logErr) {
           console.error("Error logging status change:", logErr);
         }
@@ -913,10 +1072,10 @@ export default {
               CANCELLED: 'لغو گردیده ❌'
             };
             const sLabel = statusDict[status] || status;
-            const noteTxt = operator_notes ? `\n💬 <b>توضیحات اپراتور:</b>\n${operator_notes}` : '';
+            const noteTxt = operator_notes ? `\n💬 <b>توضیحات اپراتور:</b>\n${escapeHtml(operator_notes)}` : '';
             let extraDelivery = '';
             if (status === 'COMPLETED' && result_document && result_document.text) {
-              extraDelivery = `\n\n📜 <b>خروجی مدارک نهایی:</b>\n<code>${result_document.text}</code>`;
+              extraDelivery = `\n\n📜 <b>خروجی مدارک نهایی:</b>\n<code>${escapeHtml(result_document.text)}</code>`;
             }
 
             ctx.waitUntil(
@@ -925,7 +1084,7 @@ export default {
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                   chat_id: userRec.telegram_id,
-                  text: `📌 <b>به‌روزرسانی پرونده شما در کافی نت لیمو:</b>\n\n🔖 <b>کد رهگیری:</b> <code>${order.tracking_code}</code>\n📊 <b>وضعیت جدید:</b> ${sLabel}${noteTxt}${extraDelivery}`,
+                  text: `📌 <b>به‌روزرسانی پرونده شما در کافی نت لیمو:</b>\n\n🔖 <b>کد رهگیری:</b> <code>${escapeHtml(order.tracking_code)}</code>\n📊 <b>وضعیت جدید:</b> ${escapeHtml(sLabel)}${noteTxt}${extraDelivery}`,
                   parse_mode: "HTML"
                 })
               })
@@ -938,21 +1097,16 @@ export default {
 
     // ۳. ارسال پیام تلگرامی به متقاضی از داشبورد وب
     if (reqUrl.pathname === "/api/admin/order/message" && request.method === "POST") {
-      if (!checkAdminAuth(request, env)) {
-        return new Response(JSON.stringify({ ok: false, error: "Unauthorized" }), {
-          status: 401, headers: { "Content-Type": "application/json" }
-        });
-      }
       const body = await request.json();
       const { telegram_id, message, tracking_code } = body;
       if (botToken && telegram_id && message) {
-        const trackPrefix = tracking_code ? `🔖 <b>مربوط به پرونده:</b> <code>${tracking_code}</code>\n\n` : '';
+        const trackPrefix = tracking_code ? `🔖 <b>مربوط به پرونده:</b> <code>${escapeHtml(tracking_code)}</code>\n\n` : '';
         await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             chat_id: telegram_id,
-            text: `💬 <b>پیام پشتیبانی کافی‌نت لیمو:</b>\n\n${trackPrefix}${message}`,
+            text: `💬 <b>پیام پشتیبانی کافی‌نت لیمو:</b>\n\n${trackPrefix}${escapeHtml(message)}`,
             parse_mode: "HTML"
           })
         });
@@ -1063,7 +1217,7 @@ export default {
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                   chat_id: tgId,
-                  text: `💬 <b>پاسخ پشتیبانی کافی‌نت لیمو:</b>\n\n${message}\n\n<i>(می‌توانید پیام خود را همینجا ارسال فرمایید)</i>`,
+                  text: `💬 <b>پاسخ پشتیبانی کافی‌نت لیمو:</b>\n\n${escapeHtml(message)}\n\n<i>(می‌توانید پیام خود را همینجا ارسال فرمایید)</i>`,
                   parse_mode: "HTML",
                   reply_markup: {
                     inline_keyboard: [
@@ -1373,44 +1527,52 @@ export default {
             settings[row.key] = row.value;
           });
 
-          // ۶. داده‌های کاربری (در صورت ارسال شناسه تلگرام)
-          if (tgId) {
-            let u = await db.prepare("SELECT * FROM users WHERE telegram_id = ?").bind(tgId).first();
+          // ۶. داده‌های کاربری (تنها در صورت تأیید امضای دیجیتال تلگرام با توکن ربات)
+          const clientAuth = await getAuthenticatedClient(request, env);
+          const verifiedTgId = clientAuth?.user?.id || null;
+          const verifiedFullName = clientAuth?.user?.first_name 
+            ? `${clientAuth.user.first_name} ${clientAuth.user.last_name || ''}`.trim() 
+            : null;
+
+          if (verifiedTgId) {
+            let u = await db.prepare("SELECT * FROM users WHERE telegram_id = ?").bind(verifiedTgId).first();
             if (!u) {
-              await db.prepare("INSERT INTO users (telegram_id, full_name, created_at) VALUES (?, ?, CURRENT_TIMESTAMP)").bind(tgId, fullName).run();
-              u = await db.prepare("SELECT * FROM users WHERE telegram_id = ?").bind(tgId).first();
+              await db.prepare("INSERT INTO users (telegram_id, full_name, created_at) VALUES (?, ?, CURRENT_TIMESTAMP)").bind(verifiedTgId, verifiedFullName || "کاربر گرامی").run();
+              u = await db.prepare("SELECT * FROM users WHERE telegram_id = ?").bind(verifiedTgId).first();
             }
 
             if (u) {
               let w = await db.prepare("SELECT * FROM wallets WHERE user_id = ?").bind(u.id).first();
-            if (!w) {
-              await db.prepare("INSERT INTO wallets (user_id, balance, is_frozen) VALUES (?, 0, 0)").bind(u.id).run();
-              w = { balance: 0, is_frozen: 0 };
-            }
+              if (!w) {
+                await db.prepare("INSERT INTO wallets (user_id, balance, is_frozen) VALUES (?, 0, 0)").bind(u.id).run();
+                w = { balance: 0, is_frozen: 0 };
+              }
 
-            const ordersRes = await db.prepare(`
-              SELECT o.*, s.title as service_title, s.code as service_code
-              FROM orders o
-              LEFT JOIN service_items s ON o.service_id = s.id
-              WHERE o.user_id = ? AND o.deleted_at IS NULL
-              ORDER BY o.id DESC LIMIT 50
-            `).bind(u.id).all();
+              const ordersRes = await db.prepare(`
+                SELECT o.*, s.title as service_title, s.code as service_code
+                FROM orders o
+                LEFT JOIN service_items s ON o.service_id = s.id
+                WHERE o.user_id = ? AND o.deleted_at IS NULL
+                ORDER BY o.id DESC LIMIT 50
+              `).bind(u.id).all();
 
-            const th = await db.prepare("SELECT id, status FROM support_threads WHERE user_id = ? AND status != 'CLOSED' ORDER BY id DESC LIMIT 1").bind(u.id).first();
-            let unreadCount = 0;
-            if (th) {
-              const unreadRes = await db.prepare("SELECT COUNT(*) as c FROM support_messages WHERE thread_id = ? AND sender_role = 'OPERATOR' AND is_read = 0").bind(th.id).first();
-              unreadCount = unreadRes?.c || 0;
-            }
+              const th = await db.prepare("SELECT id, status FROM support_threads WHERE user_id = ? AND status != 'CLOSED' ORDER BY id DESC LIMIT 1").bind(u.id).first();
+              let unreadCount = 0;
+              if (th) {
+                const unreadRes = await db.prepare("SELECT COUNT(*) as c FROM support_messages WHERE thread_id = ? AND sender_role = 'OPERATOR' AND is_read = 0").bind(th.id).first();
+                unreadCount = unreadRes?.c || 0;
+              }
 
-            userData = {
-              user: u,
-              wallet: w,
-              orders: ordersRes.results || [],
-              thread_id: th ? th.id : null,
-              unread_messages: unreadCount
-            };
+              userData = {
+                user: u,
+                wallet: w,
+                orders: ordersRes.results || [],
+                thread_id: th ? th.id : null,
+                unread_messages: unreadCount
+              };
             }
+          } else {
+            userData = null;
           }
         } catch (e) {
           console.error("Error in /api/client/bootstrap:", e);
@@ -1434,21 +1596,23 @@ export default {
       });
     }
 
-    // داشبورد و پروفایل مشتری در مینی‌اپ
+    // داشبورد و پروفایل مشتری در مینی‌اپ (نیازمند احراز هویت معتبر تلگرام)
     if (reqUrl.pathname === "/api/client/user/dashboard") {
       const db = env.DB;
-      const tgId = parseInt(reqUrl.searchParams.get("telegram_id") || "0", 10);
-      if (!db || !tgId) {
-        return new Response(JSON.stringify({ ok: false, error: "شناسه کاربر الزامی است." }), {
-          status: 400, headers: { "Content-Type": "application/json" }
+      const clientAuth = await getAuthenticatedClient(request, env);
+      if (!clientAuth || !clientAuth.user || !clientAuth.user.id) {
+        return new Response(JSON.stringify({ ok: false, error: "احراز هویت معتبر تلگرام الزامی است." }), {
+          status: 401, headers: { "Content-Type": "application/json" }
         });
       }
+
+      const tgId = clientAuth.user.id;
+      const fullName = `${clientAuth.user.first_name || ''} ${clientAuth.user.last_name || ''}`.trim() || "کاربر گرامی";
 
       try {
         let u = await db.prepare("SELECT * FROM users WHERE telegram_id = ?").bind(tgId).first();
         if (!u) {
-          const fn = reqUrl.searchParams.get("full_name") || "کاربر گرامی";
-          await db.prepare("INSERT INTO users (telegram_id, full_name, created_at) VALUES (?, ?, CURRENT_TIMESTAMP)").bind(tgId, fn).run();
+          await db.prepare("INSERT INTO users (telegram_id, full_name, created_at) VALUES (?, ?, CURRENT_TIMESTAMP)").bind(tgId, fullName).run();
           u = await db.prepare("SELECT * FROM users WHERE telegram_id = ?").bind(tgId).first();
         }
 
@@ -1488,14 +1652,15 @@ export default {
       }
     }
 
-    // پیام‌های گفت‌وگوی زنده مشتری در مینی‌اپ
+    // پیام‌های گفت‌وگوی زنده مشتری در مینی‌اپ (نیازمند احراز هویت معتبر تلگرام)
     if (reqUrl.pathname === "/api/client/support/messages") {
       const db = env.DB;
-      const tgId = parseInt(reqUrl.searchParams.get("telegram_id") || "0", 10);
-      if (!db || !tgId) {
-        return new Response(JSON.stringify({ ok: false, error: "شناسه کاربر الزامی است." }), { status: 400, headers: { "Content-Type": "application/json" } });
+      const clientAuth = await getAuthenticatedClient(request, env);
+      if (!clientAuth || !clientAuth.user || !clientAuth.user.id) {
+        return new Response(JSON.stringify({ ok: false, error: "احراز هویت معتبر تلگرام الزامی است." }), { status: 401, headers: { "Content-Type": "application/json" } });
       }
 
+      const tgId = clientAuth.user.id;
       try {
         const u = await db.prepare("SELECT id FROM users WHERE telegram_id = ?").bind(tgId).first();
         if (!u) {
@@ -1516,21 +1681,29 @@ export default {
       }
     }
 
-    // ارسال پیام جدید از مینی‌اپ به کارشناس
+    // ارسال پیام جدید از مینی‌اپ به کارشناس (نیازمند احراز هویت معتبر تلگرام)
     if (reqUrl.pathname === "/api/client/support/send" && request.method === "POST") {
       const db = env.DB;
+      const clientAuth = await getAuthenticatedClient(request, env);
+      if (!clientAuth || !clientAuth.user || !clientAuth.user.id) {
+        return new Response(JSON.stringify({ ok: false, error: "احراز هویت معتبر تلگرام الزامی است." }), { status: 401, headers: { "Content-Type": "application/json" } });
+      }
+
+      const tgId = clientAuth.user.id;
+      const fullName = `${clientAuth.user.first_name || ''} ${clientAuth.user.last_name || ''}`.trim() || "کاربر مینی‌اپ";
       const sbody = await request.json();
-      const tgId = parseInt(sbody.telegram_id || sbody.telegramId || "0", 10);
-      const full_name = sbody.full_name || sbody.fullName || "کاربر مینی‌اپ";
-      const message = sbody.message || "";
-      if (!db || !tgId || !message?.trim()) {
+      const message = (sbody.message || "").trim();
+      if (!db || !message) {
         return new Response(JSON.stringify({ ok: false, error: "متن پیام الزامی است." }), { status: 400, headers: { "Content-Type": "application/json" } });
+      }
+      if (message.length > 2000) {
+        return new Response(JSON.stringify({ ok: false, error: "حجم پیام بیش از حد مجاز است." }), { status: 400, headers: { "Content-Type": "application/json" } });
       }
 
       try {
         let u = await db.prepare("SELECT id, full_name FROM users WHERE telegram_id = ?").bind(tgId).first();
         if (!u) {
-          await db.prepare("INSERT INTO users (telegram_id, full_name, created_at) VALUES (?, ?, CURRENT_TIMESTAMP)").bind(tgId, full_name || "کاربر مینی‌اپ").run();
+          await db.prepare("INSERT INTO users (telegram_id, full_name, created_at) VALUES (?, ?, CURRENT_TIMESTAMP)").bind(tgId, fullName).run();
           u = await db.prepare("SELECT id, full_name FROM users WHERE telegram_id = ?").bind(tgId).first();
         }
 
@@ -1543,7 +1716,7 @@ export default {
         }
 
         await db.prepare("INSERT INTO support_messages (thread_id, sender_role, sender_id, message_text, is_read) VALUES (?, 'CUSTOMER', ?, ?, 0)")
-          .bind(th.id, tgId, message.trim()).run();
+          .bind(th.id, tgId, message).run();
 
         if (botToken && adminId) {
           ctx.waitUntil(
@@ -1552,7 +1725,7 @@ export default {
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
                 chat_id: adminId,
-                text: `💬 <b>پیام جدید در مینی‌اپ لیمو:</b>\n\n👤 <b>کاربر:</b> ${u.full_name || 'مشتری'}\n🆔 <code>${tgId}</code>\n\n📝 <i>${escapeHtml(message.trim())}</i>`,
+                text: `💬 <b>پیام جدید در مینی‌اپ لیمو:</b>\n\n👤 <b>کاربر:</b> ${escapeHtml(u.full_name || fullName)}\n🆔 <code>${tgId}</code>\n\n📝 <i>${escapeHtml(message)}</i>`,
                 parse_mode: "HTML"
               })
             }).catch(() => {})
@@ -1759,13 +1932,8 @@ export default {
       });
     }
 
-    // ۱۴. شارژ یا تعدیل دستی موجودی کیف پول توسط مدیریت
+    // ۱۴. شارژ یا تعدیل دستی موجودی کیف پول توسط مدیریت (اتومیک و محافظت‌شده در برابر Race Condition)
     if (reqUrl.pathname === "/api/admin/wallet/adjust" && request.method === "POST") {
-      if (!checkAdminAuth(request, env)) {
-        return new Response(JSON.stringify({ ok: false, error: "Unauthorized" }), {
-          status: 401, headers: { "Content-Type": "application/json" }
-        });
-      }
       const db = env.DB;
       const body = await request.json();
       let { wallet_id, user_id, amount, notes, type } = body;
@@ -1799,22 +1967,31 @@ export default {
               status: 400, headers: { "Content-Type": "application/json" }
             });
           }
-          if (w.balance + adjAmount < 0) {
-            return new Response(JSON.stringify({ ok: false, error: "موجودی حساب نمی‌تواند منفی شود." }), {
+
+          const randBytes = new Uint8Array(4);
+          crypto.getRandomValues(randBytes);
+          const hexSuffix = Array.from(randBytes).map(b => b.toString(16).padStart(2, '0')).join('').toUpperCase();
+          const txRef = `${adjAmount > 0 ? "DEP" : "DEB"}-1405-${Date.now()}-${hexSuffix}`;
+          const txType = type || (adjAmount > 0 ? "TOPUP" : "ADJUSTMENT");
+
+          // به‌روزرسانی اتومیک موجودی همراه با بررسی شرط عدم منفی شدن در خود کوئری SQL
+          const updateStmt = db.prepare(`
+            UPDATE wallets 
+            SET balance = balance + ?, updated_at = CURRENT_TIMESTAMP 
+            WHERE id = ? AND is_frozen = 0 AND (balance + ? >= 0)
+          `).bind(adjAmount, wallet_id, adjAmount);
+
+          const insertTxStmt = db.prepare(`
+            INSERT INTO wallet_transactions (wallet_id, amount, transaction_type, status, tracking_ref, notes)
+            VALUES (?, ?, ?, 'APPROVED', ?, ?)
+          `).bind(wallet_id, adjAmount, txType, txRef, notes.trim());
+
+          const batchRes = await db.batch([updateStmt, insertTxStmt]);
+          if (!batchRes || !batchRes[0]?.meta?.changes || batchRes[0].meta.changes === 0) {
+            return new Response(JSON.stringify({ ok: false, error: "موجودی حساب برای کسر کافی نیست یا حساب مسدود شده است." }), {
               status: 400, headers: { "Content-Type": "application/json" }
             });
           }
-
-          const txRef = (adjAmount > 0 ? "DEP" : "DEB") + "-1405-" + Math.floor(10000 + Math.random() * 90000);
-          const txType = type || (adjAmount > 0 ? "TOPUP" : "ADJUSTMENT");
-
-          await db.prepare("UPDATE wallets SET balance = balance + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
-            .bind(adjAmount, wallet_id).run();
-
-          await db.prepare(`
-            INSERT INTO wallet_transactions (wallet_id, amount, transaction_type, status, tracking_ref, notes)
-            VALUES (?, ?, ?, 'APPROVED', ?, ?)
-          `).bind(wallet_id, adjAmount, txType, txRef, notes.trim()).run();
 
           // اطلاع‌رسانی به تلگرام مشتری
           const userRec = await db.prepare("SELECT * FROM users WHERE id = ?").bind(w.user_id).first();
@@ -1829,11 +2006,11 @@ export default {
                 body: JSON.stringify({
                   chat_id: userRec.telegram_id,
                   text: `💳 <b>تراکنش مالی در کیف پول لیمو:</b>\n\n` +
-                    `📌 <b>نوع رویداد:</b> ${actLabel}\n` +
+                    `📌 <b>نوع رویداد:</b> ${escapeHtml(actLabel)}\n` +
                     `💰 <b>مبلغ تراکنش:</b> <code>${amtStr}</code> ریال\n` +
                     `💵 <b>موجودی جدید:</b> <code>${newBalStr}</code> ریال\n` +
-                    `🔖 <b>شناسه پیگیری:</b> <code>${txRef}</code>\n` +
-                    `📝 <b>شرح:</b> <i>${notes}</i>`,
+                    `🔖 <b>شناسه پیگیری:</b> <code>${escapeHtml(txRef)}</code>\n` +
+                    `📝 <b>شرح:</b> <i>${escapeHtml(notes)}</i>`,
                   parse_mode: "HTML"
                 })
               })
@@ -2860,11 +3037,7 @@ export default {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               chat_id: tgId,
-              text: `📩 <b>پیام جدید از مدیریت کافی‌نت لیمو:</b>
-
-${message}
-
-<i>(در صورت نیاز می‌توانید مستقیماً در پاسخ به این پیام بنویسید)</i>`,
+              text: `📩 <b>پیام جدید از مدیریت کافی‌نت لیمو:</b>\n\n${escapeHtml(message)}\n\n<i>(در صورت نیاز می‌توانید مستقیماً در پاسخ به این پیام بنویسید)</i>`,
               parse_mode: "HTML",
               reply_markup: {
                 inline_keyboard: [
@@ -2881,7 +3054,6 @@ ${message}
 
     // فعال / غیرفعال‌سازی وضعیت کانال ارتباطی
     if ((reqUrl.pathname === "/api/admin/channel/toggle" || reqUrl.pathname === "/api/admin/channel/status") && request.method === "POST") {
-      if (!checkAdminAuth(request, env)) return new Response(JSON.stringify({ ok: false, error: "Unauthorized" }), { status: 401, headers: { "Content-Type": "application/json" } });
       const { id, is_active } = await request.json();
       if (env.DB && id !== undefined) {
         await env.DB.prepare("UPDATE communication_channels SET is_active = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
@@ -2894,7 +3066,6 @@ ${message}
     // نسخه پشتیبان کامل از دیتابیس D1 (Full Database Backup JSON)
     // ========================================================
     if (reqUrl.pathname === "/api/admin/backup/export") {
-      if (!checkAdminAuth(request, env)) return new Response(JSON.stringify({ ok: false, error: "Unauthorized" }), { status: 401, headers: { "Content-Type": "application/json" } });
       const db = env.DB;
       const tables = [
         'users', 'orders', 'service_categories', 'service_items',
@@ -2929,11 +3100,6 @@ ${message}
     }
 
     if (reqUrl.pathname === "/api/admin/audit-logs") {
-      if (!checkAdminAuth(request, env)) {
-        return new Response(JSON.stringify({ ok: false, error: "Unauthorized" }), {
-          status: 401, headers: { "Content-Type": "application/json" }
-        });
-      }
       const db = env.DB;
       let logs = [];
       if (db) {
@@ -2959,10 +3125,11 @@ ${message}
       return new Response("Limo Bot Webhook Endpoint is Running (Cloudflare Edge)", { status: 200 });
     }
 
-    // ۱. بررسی امنیتی Secret Token تلگرام
+    // ۱. بررسی امنیتی Secret Token تلگرام با مقایسه زمان‌ثابت
     if (env.SECRET_TOKEN) {
-      const receivedToken = request.headers.get("X-Telegram-Bot-Api-Secret-Token");
-      if (receivedToken !== env.SECRET_TOKEN) {
+      const receivedToken = request.headers.get("X-Telegram-Bot-Api-Secret-Token") || "";
+      const isSecretValid = await timingSafeEqualStr(receivedToken, env.SECRET_TOKEN);
+      if (!isSecretValid) {
         return new Response("Unauthorized Secret Token", { status: 403 });
       }
     }
@@ -3044,7 +3211,7 @@ ${message}
                   headers: { "Content-Type": "application/json" },
                   body: JSON.stringify({
                     chat_id: adminId,
-                    text: `💬 <b>پیام چت زنده از:</b> ${userFullName} (شناسه: <code>${userId}</code>)\n\n${content}\n\n<i>(جهت پاسخ، کافیست این پیام را ریپلای کنید)</i>`,
+                    text: `💬 <b>پیام چت زنده از:</b> ${escapeHtml(userFullName)} (شناسه: <code>${escapeHtml(userId)}</code>)\n\n${escapeHtml(content)}\n\n<i>(جهت پاسخ، کافیست این پیام را ریپلای کنید)</i>`,
                     parse_mode: "HTML"
                   })
                 })
@@ -3107,7 +3274,7 @@ ${message}
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                   chat_id: targetId,
-                  text: `💬 <b>پاسخ پشتیبانی کافی نت لیمو:</b>\n\n${text}\n\n<i>(جهت ارسال پیام جدید، پاسخ خود را همینجا بنویسید)</i>`,
+                  text: `💬 <b>پاسخ پشتیبانی کافی نت لیمو:</b>\n\n${escapeHtml(text)}\n\n<i>(جهت ارسال پیام جدید، پاسخ خود را همینجا بنویسید)</i>`,
                   parse_mode: "HTML",
                   reply_markup: {
                     inline_keyboard: [
@@ -3147,7 +3314,7 @@ ${message}
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({
                       chat_id: userRec.telegram_id,
-                      text: `🎉 <b>مشتری گرامی، پرونده شما تکمیل و نهایی شد!</b>\n\n🔖 <b>کد پرونده:</b> <code>${trackingCode}</code>\n💬 <b>توضیح اپراتور:</b> ${customNote}`,
+                      text: `🎉 <b>مشتری گرامی، پرونده شما تکمیل و نهایی شد!</b>\n\n🔖 <b>کد پرونده:</b> <code>${escapeHtml(trackingCode)}</code>\n💬 <b>توضیح اپراتور:</b> ${escapeHtml(customNote)}`,
                       parse_mode: "HTML"
                     })
                   })
@@ -3156,7 +3323,7 @@ ${message}
               return webhookReply({
                 method: "sendMessage",
                 chat_id: chatId,
-                text: `✅ نتیجه پرونده <code>${trackingCode}</code> با موفقیت به مشتری تحویل داده شد و وضعیت به «تکمیل‌شده» تغییر یافت.`,
+                text: `✅ نتیجه پرونده <code>${escapeHtml(trackingCode)}</code> با موفقیت به مشتری تحویل داده شد و وضعیت به «تکمیل‌شده» تغییر یافت.`,
                 parse_mode: "HTML"
               });
             }
@@ -3171,7 +3338,7 @@ ${message}
           const u = await db.prepare("SELECT id FROM users WHERE telegram_id = ?").bind(userId).first();
           if (u) {
             const caption = msg.caption || "";
-            const codeMatch = caption.match(/LIMO-1405-\d{5}/i);
+            const codeMatch = caption.match(/LIMO-1405-[A-Z0-9]{4,16}/i);
             let order = null;
             if (codeMatch) {
               order = await db.prepare("SELECT o.*, s.title as service_title FROM orders o LEFT JOIN service_items s ON o.service_id = s.id WHERE o.tracking_code = ? AND o.user_id = ?").bind(codeMatch[0].toUpperCase(), u.id).first();
@@ -3205,7 +3372,7 @@ ${message}
                     body: JSON.stringify({
                       chat_id: adminId,
                       photo: bestPhoto.file_id,
-                      caption: `💳 <b>فیش واریز جدید از تلگرام دریافت شد!</b>\n\n🔖 <b>کد پرونده:</b> <code>${order.tracking_code}</code>\n👤 <b>متقاضی:</b> ${msg.from.first_name || ''} (شناسه: <code>${userId}</code>)\n📋 <b>خدمت:</b> ${order.service_title || 'سفارش'}\n💬 <b>توضیح:</b> ${caption || '—'}\n\n<i>جهت تأیید یا رد فیش، وارد پنل مدیریت شوید.</i>`,
+                      caption: `💳 <b>فیش واریز جدید از تلگرام دریافت شد!</b>\n\n🔖 <b>کد پرونده:</b> <code>${escapeHtml(order.tracking_code)}</code>\n👤 <b>متقاضی:</b> ${escapeHtml(msg.from.first_name || '')} (شناسه: <code>${escapeHtml(userId)}</code>)\n📋 <b>خدمت:</b> ${escapeHtml(order.service_title || 'سفارش')}\n💬 <b>توضیح:</b> ${escapeHtml(caption || '—')}\n\n<i>جهت تأیید یا رد فیش، وارد پنل مدیریت شوید.</i>`,
                       parse_mode: "HTML"
                     })
                   })
@@ -3215,7 +3382,7 @@ ${message}
               return webhookReply({
                 method: "sendMessage",
                 chat_id: chatId,
-                text: `✅ <b>تصویر فیش واریز برای پرونده شما ثبت گردید.</b>\n\n🔖 <b>کد پرونده:</b> <code>${order.tracking_code}</code>\n📋 <b>خدمت:</b> ${order.service_title || 'سفارش'}\n\n<i>رسید شما در نوبت بررسی مدیر قرار گرفت. به محض تأیید پرداخت، مراحل انجام سفارش آغاز خواهد شد.</i>`,
+                text: `✅ <b>تصویر فیش واریز برای پرونده شما ثبت گردید.</b>\n\n🔖 <b>کد پرونده:</b> <code>${escapeHtml(order.tracking_code)}</code>\n📋 <b>خدمت:</b> ${escapeHtml(order.service_title || 'سفارش')}\n\n<i>رسید شما در نوبت بررسی مدیر قرار گرفت. به محض تأیید پرداخت، مراحل انجام سفارش آغاز خواهد شد.</i>`,
                 parse_mode: "HTML"
               });
             }
@@ -3270,7 +3437,7 @@ ${message}
       }
     
       // ۲.۴. استعلام مستقیم پرونده با ارسال کد رهگیری در چت (LIMO-1405-XXXXX)
-      const trackCodeMatch = text ? text.match(/LIMO-1405-\d{5}/i) : null;
+      const trackCodeMatch = text ? text.match(/LIMO-1405-[A-Z0-9]{4,16}/i) : null;
       if (trackCodeMatch) {
         const queryCode = trackCodeMatch[0].toUpperCase();
         if (db) {
@@ -4531,16 +4698,16 @@ ${message}
             let fieldsText = "";
             try {
               const fd = JSON.parse(order.form_data || "{}");
-              fieldsText = Object.entries(fd).map(([k, v]) => `• <b>${k}:</b> <code>${v}</code>`).join("\n");
+              fieldsText = Object.entries(fd).map(([k, v]) => `• <b>${escapeHtml(k)}:</b> <code>${escapeHtml(typeof v === 'object' ? JSON.stringify(v) : v)}</code>`).join("\n");
             } catch(e){}
 
-            const viewText = `📄 <b>جزییات پرونده ${order.tracking_code}</b>\n\n` +
-              `👤 <b>متقاضی:</b> ${order.user_full_name} (<code>${order.user_telegram_id}</code>)\n` +
-              `📋 <b>خدمت:</b> ${order.service_title}\n` +
-              `📌 <b>وضعیت کنونی:</b> <code>${order.status}</code>\n` +
-              `🕒 <b>زمان ثبت:</b> <code>${(order.created_at || "").replace("T", " ").slice(0, 16)}</code>\n\n` +
+            const viewText = `📄 <b>جزییات پرونده ${escapeHtml(order.tracking_code)}</b>\n\n` +
+              `👤 <b>متقاضی:</b> ${escapeHtml(order.user_full_name || '—')} (<code>${escapeHtml(order.user_telegram_id || '—')}</code>)\n` +
+              `📋 <b>خدمت:</b> ${escapeHtml(order.service_title || '—')}\n` +
+              `📌 <b>وضعیت کنونی:</b> <code>${escapeHtml(order.status || '—')}</code>\n` +
+              `🕒 <b>زمان ثبت:</b> <code>${escapeHtml((order.created_at || "").replace("T", " ").slice(0, 16))}</code>\n\n` +
               `📝 <b>داده‌های فرم:</b>\n${fieldsText || "—"}\n\n` +
-              `💬 <b>توضیحات قبلی:</b> ${order.operator_notes || "—"}\n\n` +
+              `💬 <b>توضیحات قبلی:</b> ${escapeHtml(order.operator_notes || "—")}\n\n` +
               `جهت اقدام روی پرونده، وضعیت جدید را انتخاب فرمایید:`;
 
             const opKeyboard = [

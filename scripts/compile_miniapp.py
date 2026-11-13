@@ -1047,6 +1047,15 @@ html_content = """<!DOCTYPE html>
                 });
 
                 // دریافت داده‌های بوت‌استرپ با تاب‌آوری شبکه، تایم‌اوت ۵ ثانیه‌ای و حفظ داده‌های آفلاین
+                function getClientHeaders(extra = {}) {
+                    const headers = { ...extra };
+                    const initData = window.Telegram?.WebApp?.initData;
+                    if (initData) {
+                        headers['X-Telegram-Init-Data'] = initData;
+                    }
+                    return headers;
+                }
+
                 async function loadInitialData(isManualRetry = false) {
                     if (isManualRetry) isLoadingData.value = true;
                     // خواندن اطلاعات کاربر تلگرام از وب‌اپ
@@ -1072,7 +1081,8 @@ html_content = """<!DOCTYPE html>
                         if (userFullName.value) qParams.append('full_name', userFullName.value);
 
                         const res = await fetch('/api/client/bootstrap?' + qParams.toString(), {
-                            signal: controller.signal
+                            signal: controller.signal,
+                            headers: getClientHeaders()
                         });
                         clearTimeout(timeoutId);
                         const data = await res.json();
@@ -1117,7 +1127,9 @@ html_content = """<!DOCTYPE html>
                 async function fetchUserDashboard() {
                     if (!telegramUserId.value) return;
                     try {
-                        const res = await fetch('/api/client/user/dashboard?telegram_id=' + telegramUserId.value + '&full_name=' + encodeURIComponent(userFullName.value));
+                        const res = await fetch('/api/client/user/dashboard?telegram_id=' + telegramUserId.value + '&full_name=' + encodeURIComponent(userFullName.value), {
+                            headers: getClientHeaders()
+                        });
                         const data = await res.json();
                         if (data.ok) {
                             walletBalance.value = data.wallet?.balance || 0;
@@ -1130,7 +1142,9 @@ html_content = """<!DOCTYPE html>
                 async function fetchSupportMessages() {
                     if (!telegramUserId.value) return;
                     try {
-                        const res = await fetch('/api/client/support/messages?telegram_id=' + telegramUserId.value);
+                        const res = await fetch('/api/client/support/messages?telegram_id=' + telegramUserId.value, {
+                            headers: getClientHeaders()
+                        });
                         const data = await res.json();
                         if (data.ok) {
                             chatMessages.value = data.messages || [];
@@ -1164,7 +1178,7 @@ html_content = """<!DOCTYPE html>
                     try {
                         const res = await fetch('/api/client/support/send', {
                             method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
+                            headers: getClientHeaders({ 'Content-Type': 'application/json' }),
                             body: JSON.stringify({
                                 telegram_id: telegramUserId.value,
                                 full_name: userFullName.value,
@@ -1275,7 +1289,7 @@ html_content = """<!DOCTYPE html>
                     try {
                         const res = await fetch('/api/order/submit', {
                             method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
+                            headers: getClientHeaders({ 'Content-Type': 'application/json' }),
                             body: JSON.stringify(payload)
                         });
                         const data = await res.json();
